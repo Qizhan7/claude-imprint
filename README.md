@@ -2,7 +2,7 @@
 
 A self-hosted AI agent system built on **Claude Code**. Multi-channel chat (Telegram + WeChat + Claude.ai), persistent memory with semantic search, scheduled tasks, and a single-file dashboard — all running on your own machine.
 
-Think of it as a DIY [OpenClaw](https://github.com/nicholasgasior/OpenClaw), but using only official Claude Code features. No third-party account authorization, all data stays local.
+Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using only official Claude Code features. No third-party account authorization, all data stays local.
 
 ## Features
 
