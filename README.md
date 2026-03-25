@@ -6,8 +6,9 @@ Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using
 
 ## Features
 
+- **Unified Memory Across Claude Code and Claude.ai** — The same SQLite memory backend serves both Claude Code (via stdio MCP) and Claude.ai chat (via HTTP MCP + Cloudflare Tunnel). Memories saved in one are instantly available in the other. One brain, multiple interfaces.
 - **Memory System** — SQLite + FTS5 keyword search + Ollama bge-m3 vector embeddings. Hybrid search with time decay. MCP-based: Claude decides when to read/write memories.
-- **Multi-Channel** — Telegram (official plugin), WeChat (via bridge), Claude.ai chat (via Cloudflare Tunnel + OAuth). All channels share the same memory.
+- **Multi-Channel** — Telegram (official plugin), WeChat (via bridge), Claude.ai chat (via Custom Connector). All channels share the same memory.
 - **Scheduled Tasks** — Persistent tasks (morning briefing, reminders, nightly memory consolidation) using Claude Code's built-in scheduler.
 - **Heartbeat Agent** — Periodic automated checks with proactive notifications.
 - **Dashboard** — Single-file FastAPI app (localhost:3000). Component status, start/stop controls, memory browser, interaction heatmap.
@@ -16,13 +17,19 @@ Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using
 ## Architecture
 
 ```
-You ← Telegram / WeChat / Claude.ai chat
-         ↓
-    Claude Code (the brain)
-    ├── CLAUDE.md (personality + rules)
-    ├── MCP Memory Server → SQLite (memory.db)
-    ├── Scheduled Tasks (persistent cron)
-    └── Dashboard (localhost:3000)
+                        ┌─────────────────┐
+                        │   memory.db     │  ← single source of truth
+                        │  (SQLite local) │
+                        └────────┬────────┘
+                                 │
+                ┌────────────────┼────────────────┐
+                │ stdio          │ HTTP            │
+                ▼                ▼                 ▼
+        Claude Code        Cloudflare Tunnel   Dashboard
+        ├── Telegram       → Claude.ai chat    (localhost:3000)
+        ├── WeChat            (Custom Connector)
+        ├── Scheduled Tasks
+        └── CLAUDE.md
 ```
 
 ## Prerequisites
@@ -79,38 +86,68 @@ claude --channels plugin:telegram@claude-plugins-official
 
 ### 3. Claude.ai Chat Integration
 
-To access your memory from Claude.ai's web interface:
+This is the key feature: **Claude.ai chat and Claude Code share the same memory database.** Memories saved in a chat conversation are searchable from Claude Code, and vice versa.
 
-1. Start the HTTP memory server:
-   ```bash
-   python3.12 memory_mcp.py --http
-   ```
+The memory MCP server supports two transports — stdio (for Claude Code) and HTTP (for Claude.ai via Custom Connector). Both read and write to the same local `memory.db`.
 
-2. Set up Cloudflare Tunnel:
-   ```bash
-   brew install cloudflare/cloudflare/cloudflared
-   cloudflared tunnel login
-   cloudflared tunnel create my-tunnel
-   cloudflared tunnel route dns my-tunnel memory.yourdomain.com
-   ```
+#### Step 1: Start the HTTP memory server
 
-3. Generate OAuth credentials:
-   ```bash
-   python3 -c "
-   import secrets, json
-   creds = {
-       'client_id': secrets.token_urlsafe(16),
-       'client_secret': secrets.token_urlsafe(32),
-       'access_token': secrets.token_urlsafe(32),
-   }
-   with open('$HOME/.imprint-oauth.json', 'w') as f:
-       json.dump(creds, f, indent=2)
-   print('Credentials saved to ~/.imprint-oauth.json')
-   print(f'Client ID: {creds[\"client_id\"]}')
-   "
-   ```
+```bash
+python3.12 memory_mcp.py --http
+# Runs on localhost:8000
+```
 
-4. In Claude.ai → Settings → Connectors → Add Custom Connector, enter your tunnel URL and OAuth credentials.
+This runs alongside the stdio server that Claude Code already uses. They share the same database (SQLite WAL mode handles concurrent access).
+
+#### Step 2: Expose via Cloudflare Tunnel
+
+```bash
+brew install cloudflare/cloudflare/cloudflared
+cloudflared tunnel login
+cloudflared tunnel create my-tunnel
+cloudflared tunnel route dns my-tunnel memory.yourdomain.com
+```
+
+Or use a free quick tunnel (temporary URL, changes on restart):
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+#### Step 3: Generate OAuth credentials
+
+```bash
+python3 -c "
+import secrets, json
+creds = {
+    'client_id': secrets.token_urlsafe(16),
+    'client_secret': secrets.token_urlsafe(32),
+    'access_token': secrets.token_urlsafe(32),
+}
+with open('\$HOME/.imprint-oauth.json', 'w') as f:
+    json.dump(creds, f, indent=2)
+print('Credentials saved to ~/.imprint-oauth.json')
+print(f'Client ID: {creds[\"client_id\"]}')
+"
+```
+
+#### Step 4: Add Custom Connector in Claude.ai
+
+1. Go to **Claude.ai → Settings → Connectors → Add Custom Connector**
+2. Enter your tunnel URL
+3. In Advanced Settings, enter the OAuth Client ID and Client Secret
+4. Click Add — done
+
+Claude.ai now has access to `memory_remember`, `memory_search`, `memory_forget`, `memory_daily_log`, and `memory_list` — the exact same tools Claude Code uses.
+
+#### Step 5: Teach Claude.ai to use the memory
+
+Adding the connector gives Claude.ai access to the tools, but it won't know *when* to use them unless you tell it. A few options:
+
+- **Project instructions** (recommended): Create a Claude.ai Project and add instructions like *"Use `memory_search` to recall context. Use `memory_remember` to save important information."*
+- **Custom instructions**: In Claude.ai → Settings → Custom Instructions, add a note about using the memory tools.
+- **Just ask**: You can also tell Claude in any conversation to remember or search — it will see the available tools and use them.
+
+Once set up, the workflow is seamless: chat on Claude.ai during the day, switch to Claude Code for coding — same memories, no sync needed.
 
 ### 4. Dashboard
 
