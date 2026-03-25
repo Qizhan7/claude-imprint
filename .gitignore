@@ -1,0 +1,41 @@
+# Database
+memory.db
+memory.db-wal
+memory.db-shm
+
+# Logs
+logs/*.log
+logs/*.txt
+
+# PID files
+.pid*
+
+# Daily logs (generated, contain personal data)
+memory/????-??-??.md
+
+# User memories data
+memories/*
+!memories/.gitkeep
+data/*
+!data/.gitkeep
+
+# OAuth credentials
+.imprint-oauth.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Local config (copy from .example)
+.mcp.json
+
+# Cloudflare
+.cloudflared/
+
+# Chat export data
+chat_sessions/
+conversations.json

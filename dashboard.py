@@ -1,0 +1,906 @@
+#!/usr/bin/env python3.12
+"""
+Claude Imprint — Dashboard
+localhost:3000 — manage all components: start/stop/status
+"""
+
+import os
+import subprocess
+import signal
+import json
+from pathlib import Path
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+import psutil
+import uvicorn
+
+app = FastAPI(title="Claude Imprint")
+BASE = Path(__file__).parent
+LOGS = BASE / "logs"
+LOGS.mkdir(exist_ok=True)
+
+# ─── Components ──────────────────────────────────────────
+
+COMPONENTS = {
+    "memory_http": {
+        "name": "🧠 Memory HTTP",
+        "pid_file": ".pid-http",
+        "start_cmd": ["python3.12", str(BASE / "memory_mcp.py"), "--http"],
+        "log_file": "logs/http.log",
+        "type": "background",
+        "check_port": 8000,
+    },
+    "tunnel": {
+        "name": "🌐 Cloudflare Tunnel",
+        "pid_file": ".pid-tunnel",
+        "start_cmd": ["cloudflared", "tunnel", "run", "my-tunnel"],
+        "log_file": "logs/tunnel.log",
+        "type": "background",
+        "grep_pattern": "cloudflared tunnel",
+    },
+    "telegram": {
+        "name": "📨 Telegram",
+        "grep_pattern": "channels plugin:telegram",
+        "terminal_cmd": "claude --channels plugin:telegram@claude-plugins-official",
+        "type": "terminal",
+    },
+    "wechat": {
+        "name": "📱 WeChat",
+        "grep_pattern": "dangerously-load-development-channels server:wechat",
+        "terminal_cmd": "claude --dangerously-load-development-channels server:wechat",
+        "type": "terminal",
+    },
+}
+
+
+# ─── Status Detection ────────────────────────────────────
+
+def get_pid_status(comp):
+    """Check background process status: port → grep → PID file"""
+    # Method 1: port detection (lsof, no root needed)
+    if "check_port" in comp:
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{comp['check_port']}"],
+                capture_output=True, text=True, timeout=3
+            )
+            pids = [p for p in result.stdout.strip().split("\n") if p]
+            if pids:
+                return {"running": True, "pid": int(pids[0])}
+        except Exception:
+            pass
+    # Method 2: process name grep
+    if "grep_pattern" in comp:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", comp["grep_pattern"]],
+                capture_output=True, text=True, timeout=3
+            )
+            pids = [p for p in result.stdout.strip().split("\n") if p]
+            if pids:
+                return {"running": True, "pid": int(pids[0])}
+        except Exception:
+            pass
+    # Method 3: PID file fallback
+    pid_path = BASE / comp.get("pid_file", "")
+    if pid_path and pid_path.exists():
+        try:
+            pid = int(pid_path.read_text().strip())
+            if psutil.pid_exists(pid):
+                p = psutil.Process(pid)
+                if p.status() != psutil.STATUS_ZOMBIE:
+                    return {"running": True, "pid": pid}
+        except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+        pid_path.unlink(missing_ok=True)
+    return {"running": False, "pid": None}
+
+
+def get_terminal_status(comp):
+    """Check terminal window process status"""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", comp["grep_pattern"]],
+            capture_output=True, text=True, timeout=3
+        )
+        pids = result.stdout.strip().split("\n")
+        pids = [p for p in pids if p]
+        return {"running": len(pids) > 0, "pid": int(pids[0]) if pids else None}
+    except Exception:
+        return {"running": False, "pid": None}
+
+
+def get_tunnel_url():
+    """Return tunnel URL if running"""
+    status = get_pid_status(COMPONENTS["tunnel"])
+    if status["running"]:
+        return "https://your-domain.example.com"
+    return None
+
+
+def get_claude_auth():
+    """Check Claude Code auth status"""
+    try:
+        result = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=10
+        )
+        output = result.stdout + result.stderr
+        if "expired" in output.lower():
+            return "expired"
+        if "authenticated" in output.lower() or "logged in" in output.lower():
+            return "ok"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+def get_memory_stats():
+    """Get memory stats"""
+    db_path = BASE / "memory.db"
+    if not db_path.exists():
+        return {"count": 0, "today_logs": 0}
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        conn.close()
+
+        from datetime import datetime, timezone, timedelta
+        tz = timezone(timedelta(hours=int(os.environ.get("TZ_OFFSET", 0))))
+        today = datetime.now(tz).strftime("%Y-%m-%d")
+        log_file = BASE / "memory" / f"{today}.md"
+        today_logs = 0
+        if log_file.exists():
+            today_logs = len([l for l in log_file.read_text().splitlines() if l.strip()])
+        return {"count": count, "today_logs": today_logs}
+    except Exception:
+        return {"count": 0, "today_logs": 0}
+
+
+def get_scheduled_tasks():
+    """Read scheduled tasks directory"""
+    tasks_dir = Path.home() / ".claude" / "scheduled-tasks"
+    if not tasks_dir.exists():
+        return []
+    tasks = []
+    import yaml
+    for d in sorted(tasks_dir.iterdir()):
+        skill = d / "SKILL.md"
+        if not skill.exists():
+            continue
+        text = skill.read_text()
+        # parse frontmatter
+        meta = {"id": d.name, "name": d.name, "description": ""}
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    fm = yaml.safe_load(parts[1])
+                    if fm:
+                        meta["name"] = fm.get("name", d.name)
+                        meta["description"] = fm.get("description", "")
+                except Exception:
+                    pass
+        tasks.append(meta)
+    return tasks
+
+
+def get_heatmap_data():
+    """Get interaction data for the past 120 days"""
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=int(os.environ.get("TZ_OFFSET", 0))))
+    today = datetime.now(tz).date()
+    data = {}
+
+    # Count memories per day from memory.db
+    db_path = BASE / "memory.db"
+    if db_path.exists():
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute(
+            "SELECT DATE(created_at) as d, COUNT(*) as c FROM memories GROUP BY DATE(created_at)"
+        ).fetchall()
+        conn.close()
+        for d, c in rows:
+            if d:
+                data[d] = data.get(d, 0) + c
+
+    # Also count daily log lines
+    mem_dir = BASE / "memory"
+    if mem_dir.exists():
+        for f in mem_dir.glob("????-??-??.md"):
+            d = f.stem
+            lines = len([l for l in f.read_text().splitlines() if l.strip() and not l.startswith("#")])
+            if lines > 0:
+                data[d] = data.get(d, 0) + lines
+
+    # Assemble last 120 days
+    result = []
+    for i in range(119, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        result.append({"date": d, "count": data.get(d, 0)})
+    return result
+
+
+# ─── API ────────────────────────────────────────────────
+
+@app.get("/api/status")
+async def api_status():
+    statuses = {}
+    for key, comp in COMPONENTS.items():
+        if comp["type"] == "background":
+            status = get_pid_status(comp)
+        else:
+            status = get_terminal_status(comp)
+        status["name"] = comp["name"]
+        status["type"] = comp["type"]
+        statuses[key] = status
+
+    tunnel_url = get_tunnel_url()
+    memory = get_memory_stats()
+    tasks = get_scheduled_tasks()
+
+    return {
+        "components": statuses,
+        "tunnel_url": tunnel_url,
+        "memory": memory,
+        "tasks": tasks,
+    }
+
+
+@app.post("/api/{component}/start")
+async def api_start(component: str):
+    if component not in COMPONENTS:
+        return JSONResponse({"error": "unknown component"}, 404)
+
+    comp = COMPONENTS[component]
+
+    if comp["type"] == "background":
+        log_path = BASE / comp["log_file"]
+        with open(log_path, "a") as log:
+            proc = subprocess.Popen(
+                comp["start_cmd"],
+                stdout=log, stderr=log,
+                cwd=str(BASE),
+                start_new_session=True,
+            )
+        pid_path = BASE / comp["pid_file"]
+        pid_path.write_text(str(proc.pid))
+        return {"ok": True, "pid": proc.pid}
+    else:
+        # Terminal window
+        cmd = comp["terminal_cmd"]
+        subprocess.run([
+            "osascript", "-e",
+            f'tell application "Terminal" to do script "{cmd}"'
+        ], capture_output=True)
+        return {"ok": True}
+
+
+@app.post("/api/{component}/stop")
+async def api_stop(component: str):
+    if component not in COMPONENTS:
+        return JSONResponse({"error": "unknown component"}, 404)
+
+    comp = COMPONENTS[component]
+
+    if comp["type"] == "background":
+        # Get actual PID via status detection
+        status = get_pid_status(comp)
+        if status["running"] and status["pid"]:
+            try:
+                os.kill(status["pid"], signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        # Clean up PID file
+        pid_file = comp.get("pid_file", "")
+        if pid_file:
+            pid_path = BASE / pid_file
+            pid_path.unlink(missing_ok=True)
+        return {"ok": True}
+    else:
+        # Can't force-kill terminal sessions
+        return {"ok": True, "message": "Please close the terminal window manually (Ctrl+C)"}
+
+
+@app.get("/api/heatmap")
+async def api_heatmap():
+    """Return heatmap data"""
+    return {"days": get_heatmap_data()}
+
+
+@app.get("/api/memories")
+async def api_memories(q: str = "", limit: int = 20):
+    """Search or list memories"""
+    db_path = BASE / "memory.db"
+    if not db_path.exists():
+        return {"memories": []}
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    if q:
+        rows = conn.execute(
+            "SELECT id, content, category, source, importance, created_at FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
+            (f"%{q}%", limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, content, category, source, importance, created_at FROM memories ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return {"memories": [dict(r) for r in rows]}
+
+
+@app.get("/api/logs/{component}")
+async def api_logs(component: str, lines: int = 30):
+    """Get recent logs"""
+    comp = COMPONENTS.get(component)
+    if not comp or "log_file" not in comp:
+        return {"logs": "No logs"}
+    log_path = BASE / comp["log_file"]
+    if not log_path.exists():
+        return {"logs": "Log file not found"}
+    try:
+        all_lines = log_path.read_text().splitlines()
+        return {"logs": "\n".join(all_lines[-lines:])}
+    except Exception as e:
+        return {"logs": f"Read error: {e}"}
+
+
+# ─── Frontend ────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Imprint</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #FAF9F5;
+    color: #3D3D3A;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .header {
+    text-align: center;
+    padding: 30px 0 20px;
+  }
+  .header h1 {
+    font-size: 28px;
+    color: #B96748;
+    margin-bottom: 8px;
+  }
+  .header .subtitle {
+    color: #B0AEA5;
+    font-size: 14px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    max-width: 900px;
+    margin: 20px auto;
+  }
+  .card {
+    background: #FFFFFF;
+    border: 1px solid #E8E6DC;
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .card:hover { border-color: #B96748; box-shadow: 0 2px 12px rgba(185,103,72,0.08); }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .card-name { font-size: 16px; font-weight: 600; color: #3D3D3A; }
+  .status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 8px;
+  }
+  .status-dot.on { background: #B96748; box-shadow: 0 0 8px rgba(185,103,72,0.4); }
+  .status-dot.off { background: #B0AEA5; }
+  .status-dot.warn { background: #F59E0B; box-shadow: 0 0 8px rgba(245,158,11,0.4); }
+  .toggle {
+    position: relative;
+    width: 44px; height: 24px;
+    cursor: pointer;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: #D5D3C9;
+    border-radius: 12px;
+    transition: 0.3s;
+  }
+  .toggle .slider:before {
+    content: "";
+    position: absolute;
+    height: 18px; width: 18px;
+    left: 3px; bottom: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: 0.3s;
+  }
+  .toggle input:checked + .slider { background: #B96748; }
+  .toggle input:checked + .slider:before { transform: translateX(20px); }
+  .card-info {
+    font-size: 12px;
+    color: #B0AEA5;
+    margin-top: 8px;
+  }
+  .info-bar {
+    max-width: 900px;
+    margin: 20px auto;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .info-chip {
+    background: #FFFFFF;
+    border: 1px solid #E8E6DC;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    flex: 1;
+    min-width: 200px;
+  }
+  .info-chip .label { color: #B0AEA5; margin-bottom: 4px; }
+  .info-chip .value { color: #B96748; font-family: monospace; word-break: break-all; }
+  .memory-section {
+    max-width: 900px;
+    margin: 20px auto;
+    background: #FFFFFF;
+    border: 1px solid #E8E6DC;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .memory-section h2 {
+    font-size: 18px;
+    margin-bottom: 12px;
+    color: #B96748;
+  }
+  .search-box {
+    width: 100%;
+    padding: 8px 12px;
+    background: #FFFFFF;
+    border: 1px solid #E8E6DC;
+    border-radius: 8px;
+    color: #3D3D3A;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .search-box:focus { outline: none; border-color: #B96748; }
+  .memory-item {
+    padding: 8px 0;
+    border-bottom: 1px solid #E8E6DC;
+    font-size: 13px;
+    color: #3D3D3A;
+  }
+  .memory-item:last-child { border-bottom: none; }
+  .memory-meta { color: #B0AEA5; font-size: 11px; margin-top: 2px; }
+  .log-btn {
+    background: none;
+    border: 1px solid #E8E6DC;
+    color: #B0AEA5;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .log-btn:hover { border-color: #B96748; color: #B96748; }
+  .tasks-section {
+    max-width: 900px;
+    margin: 20px auto;
+    background: #FFFFFF;
+    border: 1px solid #E8E6DC;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .tasks-section h2 {
+    font-size: 18px;
+    margin-bottom: 12px;
+    color: #B96748;
+  }
+  .task-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #E8E6DC;
+    font-size: 13px;
+  }
+  .task-item:last-child { border-bottom: none; }
+  .task-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #B96748;
+    box-shadow: 0 0 6px rgba(185,103,72,0.3);
+    flex-shrink: 0;
+  }
+  .heatmap-section {
+    max-width: 900px;
+    margin: 20px auto;
+    background: #FFFFFF;
+    border: 1px solid #E8E6DC;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .heatmap-section h2 {
+    font-size: 18px;
+    margin-bottom: 4px;
+    color: #B96748;
+  }
+  .heatmap-subtitle {
+    font-size: 12px;
+    color: #B0AEA5;
+    margin-bottom: 14px;
+  }
+  .heatmap-wrap {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .heatmap-months {
+    display: flex;
+    font-size: 10px;
+    color: #B0AEA5;
+    margin-bottom: 4px;
+    margin-left: 32px;
+  }
+  .heatmap-months span {
+    flex: 1;
+    min-width: 0;
+  }
+  .heatmap-days {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 10px;
+    color: #B0AEA5;
+    padding-top: 1px;
+  }
+  .heatmap-days span {
+    height: 12px;
+    line-height: 12px;
+    width: 24px;
+    text-align: right;
+    padding-right: 4px;
+  }
+  .heatmap-grid {
+    display: flex;
+    gap: 3px;
+    overflow-x: auto;
+  }
+  .heatmap-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .heatmap-cell {
+    width: 12px; height: 12px;
+    border-radius: 2px;
+    background: #EBEAE2;
+    position: relative;
+    cursor: default;
+  }
+  .heatmap-cell[data-level="1"] { background: #F0D1C2; }
+  .heatmap-cell[data-level="2"] { background: #DDA58A; }
+  .heatmap-cell[data-level="3"] { background: #C97B5A; }
+  .heatmap-cell[data-level="4"] { background: #B96748; }
+  .heatmap-cell .tooltip {
+    display: none;
+    position: absolute;
+    bottom: 18px; left: 50%;
+    transform: translateX(-50%);
+    background: #3D3D3A;
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    z-index: 10;
+  }
+  .heatmap-cell:hover .tooltip { display: block; }
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+    font-size: 11px;
+    color: #B0AEA5;
+    justify-content: flex-end;
+  }
+  .heatmap-legend .heatmap-cell { cursor: default; width: 10px; height: 10px; }
+  .task-name { font-weight: 600; color: #3D3D3A; }
+  .task-desc { color: #B0AEA5; font-size: 12px; }
+  .log-box {
+    background: #FFFFFF;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #B0AEA5;
+    max-height: 150px;
+    overflow-y: auto;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>✨ Claude Imprint</h1>
+  <div class="subtitle" id="auth-status">Loading...</div>
+</div>
+
+<div class="grid" id="components"></div>
+
+<div class="info-bar">
+  <div class="info-chip">
+    <div class="label">Tunnel URL</div>
+    <div class="value" id="tunnel-url">-</div>
+  </div>
+  <div class="info-chip">
+    <div class="label">Memories</div>
+    <div class="value" id="memory-count">-</div>
+  </div>
+  <div class="info-chip">
+    <div class="label">Today's Logs</div>
+    <div class="value" id="today-logs">-</div>
+  </div>
+</div>
+
+<div class="heatmap-section">
+  <h2>📊 Interaction Heatmap</h2>
+  <div class="heatmap-subtitle">Darker = more activity that day</div>
+  <div id="heatmap">Loading...</div>
+  <div class="heatmap-legend">
+    <span>Less</span>
+    <div class="heatmap-cell"></div>
+    <div class="heatmap-cell" data-level="1"></div>
+    <div class="heatmap-cell" data-level="2"></div>
+    <div class="heatmap-cell" data-level="3"></div>
+    <div class="heatmap-cell" data-level="4"></div>
+    <span>More</span>
+  </div>
+</div>
+
+<div class="tasks-section">
+  <h2>⏰ Scheduled Tasks</h2>
+  <div id="tasks-list">Loading...</div>
+</div>
+
+<div class="memory-section">
+  <h2>🧠 Memory</h2>
+  <input class="search-box" type="text" placeholder="Search memories..." id="memory-search" oninput="searchMemories()">
+  <div id="memory-list"></div>
+</div>
+
+<script>
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const data = await r.json();
+    renderComponents(data.components);
+    renderTasks(data.tasks || []);
+    document.getElementById('tunnel-url').textContent = data.tunnel_url ? data.tunnel_url : 'Not running';
+    document.getElementById('memory-count').textContent = data.memory.count;
+    document.getElementById('today-logs').textContent = data.memory.today_logs;
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function renderComponents(components) {
+  const grid = document.getElementById('components');
+  let html = '';
+  for (const [key, comp] of Object.entries(components)) {
+    const dotClass = comp.running ? 'on' : 'off';
+    const statusText = comp.running ? 'Running' : 'Stopped';
+    const checked = comp.running ? 'checked' : '';
+    const typeLabel = comp.type === 'terminal' ? 'Terminal' : 'Background';
+    html += `
+      <div class="card">
+        <div class="card-header">
+          <span>
+            <span class="status-dot ${dotClass}"></span>
+            <span class="card-name">${comp.name}</span>
+          </span>
+          <label class="toggle">
+            <input type="checkbox" ${checked} onchange="toggleComponent('${key}', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="card-info">
+          ${statusText} · ${typeLabel}${comp.pid ? ' · PID ' + comp.pid : ''}
+          ${comp.type === 'background' ? '<br><button class="log-btn" onclick="toggleLog(\\'' + key + '\\')">Logs</button><div class="log-box" id="log-' + key + '"></div>' : ''}
+        </div>
+      </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function renderTasks(tasks) {
+  const list = document.getElementById('tasks-list');
+  if (!tasks.length) {
+    list.innerHTML = '<div style="color:#B0AEA5;text-align:center;padding:12px">No scheduled tasks</div>';
+    return;
+  }
+  list.innerHTML = tasks.map(t => `
+    <div class="task-item">
+      <span class="task-dot"></span>
+      <span>
+        <span class="task-name">${t.name}</span>
+        <div class="task-desc">${t.description}</div>
+      </span>
+    </div>
+  `).join('');
+}
+
+async function toggleComponent(key, on) {
+  const action = on ? 'start' : 'stop';
+  await fetch(`/api/${key}/${action}`, { method: 'POST' });
+  setTimeout(fetchStatus, 1500);
+}
+
+async function toggleLog(key) {
+  const box = document.getElementById('log-' + key);
+  if (box.style.display === 'block') {
+    box.style.display = 'none';
+    return;
+  }
+  const r = await fetch(`/api/logs/${key}`);
+  const data = await r.json();
+  box.textContent = data.logs;
+  box.style.display = 'block';
+  box.scrollTop = box.scrollHeight;
+}
+
+async function searchMemories() {
+  const q = document.getElementById('memory-search').value;
+  const r = await fetch(`/api/memories?q=${encodeURIComponent(q)}&limit=20`);
+  const data = await r.json();
+  renderMemories(data.memories);
+}
+
+function renderMemories(memories) {
+  const list = document.getElementById('memory-list');
+  if (!memories.length) {
+    list.innerHTML = '<div style="color:#666;padding:20px;text-align:center">No memories yet</div>';
+    return;
+  }
+  list.innerHTML = memories.map(m => `
+    <div class="memory-item">
+      ${m.content}
+      <div class="memory-meta">[${m.category}|${m.source}] ${m.created_at} · importance ${m.importance}</div>
+    </div>
+  `).join('');
+}
+
+async function fetchHeatmap() {
+  try {
+    const r = await fetch('/api/heatmap');
+    const data = await r.json();
+    renderHeatmap(data.days);
+  } catch(e) { console.error(e); }
+}
+
+function renderHeatmap(days) {
+  const container = document.getElementById('heatmap');
+  if (!days || !days.length) {
+    container.innerHTML = '<div style="color:#B0AEA5;text-align:center">No data</div>';
+    return;
+  }
+
+  // Level: 0=no activity, 1-4 by quartile
+  const counts = days.map(d => d.count).filter(c => c > 0);
+  const max = Math.max(...counts, 1);
+  const q1 = max * 0.25, q2 = max * 0.5, q3 = max * 0.75;
+
+  function level(c) {
+    if (c === 0) return 0;
+    if (c <= q1) return 1;
+    if (c <= q2) return 2;
+    if (c <= q3) return 3;
+    return 4;
+  }
+
+  // GitHub-style: columns=weeks, rows=day-of-week
+  const firstDate = new Date(days[0].date + 'T00:00:00');
+  const firstDay = firstDate.getDay(); // 0=Sun
+
+  // Pad first week
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  days.forEach(d => cells.push(d));
+
+  // Split into weeks
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    weeks.push(cells.slice(i, i + 7));
+  }
+
+  // Month labels
+  const months = [];
+  let lastMonth = '';
+  weeks.forEach((week, wi) => {
+    const realDay = week.find(d => d !== null);
+    if (realDay) {
+      const m = realDay.date.substring(0, 7);
+      if (m !== lastMonth) {
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        months.push({ index: wi, label: monthNames[parseInt(m.split('-')[1]) - 1] });
+        lastMonth = m;
+      }
+    }
+  });
+
+  const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  let html = '<div class="heatmap-months" style="padding-left:32px;display:flex;gap:3px;">';
+  // Position month labels
+  let monthHtml = '';
+  months.forEach((m, i) => {
+    const next = months[i + 1] ? months[i + 1].index : weeks.length;
+    const span = next - m.index;
+    monthHtml += '<span style="width:' + (span * 15 - 3) + 'px;flex-shrink:0">' + m.label + '</span>';
+  });
+  html += monthHtml + '</div>';
+
+  html += '<div class="heatmap-wrap">';
+  // Day labels
+  html += '<div class="heatmap-days">';
+  for (let i = 0; i < 7; i++) {
+    html += '<span>' + (i % 2 === 1 ? dayLabels[i] : '') + '</span>';
+  }
+  html += '</div>';
+
+  // Grid cells
+  html += '<div class="heatmap-grid">';
+  weeks.forEach(week => {
+    html += '<div class="heatmap-col">';
+    for (let i = 0; i < 7; i++) {
+      const d = i < week.length ? week[i] : null;
+      if (d === null) {
+        html += '<div class="heatmap-cell" style="visibility:hidden"></div>';
+      } else {
+        const lv = level(d.count);
+        const tip = d.date + ': ' + (d.count > 0 ? d.count + ' interactions' : 'quiet day');
+        html += '<div class="heatmap-cell" data-level="' + lv + '"><span class="tooltip">' + tip + '</span></div>';
+      }
+    }
+    html += '</div>';
+  });
+  html += '</div></div>';
+
+  container.innerHTML = html;
+}
+
+// Init
+fetchStatus();
+fetchHeatmap();
+searchMemories();
+setInterval(fetchStatus, 3000);
+</script>
+</body>
+</html>"""
+
+
+if __name__ == "__main__":
+    print("✨ Claude Imprint Dashboard: http://localhost:3000", flush=True)
+    uvicorn.run(app, host="127.0.0.1", port=3000, log_level="warning")

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "wechat": {
+      "command": "npx",
+      "args": ["claude-wechat-channel"]
+    }
+  }
+}
