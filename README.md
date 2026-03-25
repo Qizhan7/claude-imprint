@@ -7,7 +7,7 @@ Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using
 ## Features
 
 - **Unified Memory Across Claude Code and Claude.ai** — The same SQLite memory backend serves both Claude Code (local MCP server) and Claude.ai chat (via Custom Connector + Cloudflare Tunnel). Memories saved in one are instantly available in the other. One brain, multiple interfaces.
-- **Memory System** — SQLite + FTS5 keyword search + Ollama bge-m3 vector embeddings. Hybrid search with time decay. MCP-based: Claude decides when to read/write memories.
+- **Custom Memory System (replaces CC's built-in memory)** — Claude Code's default memory is file-based and basic. This project replaces it with a full database-backed system: SQLite + FTS5 full-text search + Ollama bge-m3 vector embeddings. Hybrid retrieval (keyword + semantic + time decay scoring), categorized storage, daily logs, and MCP tools that let Claude autonomously decide when to remember and recall.
 - **Multi-Channel (all optional)** — Pick the channels you need: Telegram (official plugin), WeChat (via bridge), Claude.ai chat (via Custom Connector). Each is independent — install one, two, or all. They share the same memory.
 - **Scheduled Tasks** — Persistent tasks (morning briefing, reminders, nightly memory consolidation) using Claude Code's built-in scheduler.
 - **Heartbeat Agent** — Periodic automated checks with proactive notifications.
