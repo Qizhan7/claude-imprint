@@ -180,6 +180,7 @@ claude-imprint/
 - [OpenClaw](https://github.com/openclaw/openclaw) — The original Claude-based AI assistant that inspired this project's architecture
 - [Anthropic](https://anthropic.com) — Claude Code, MCP protocol, and the Telegram plugin
 - [FastMCP](https://github.com/jlowin/fastmcp) / [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) — MCP server framework
+- [claude-wechat-channel](https://www.npmjs.com/package/claude-wechat-channel) — WeChat bridge for Claude Code
 - [Ollama](https://ollama.com) + [bge-m3](https://huggingface.co/BAAI/bge-m3) — Local embedding model for semantic search
 
 ## License
