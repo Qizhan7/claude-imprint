@@ -177,7 +177,7 @@ claude-imprint/
 
 ## Acknowledgements
 
-- [OpenClaw](https://github.com/openclaw/openclaw) — The original Claude-based AI assistant that inspired this project's architecture
+- [OpenClaw](https://github.com/openclaw/openclaw) — The personal AI assistant framework that inspired this project
 - [Anthropic](https://anthropic.com) — Claude Code, MCP protocol, and the Telegram plugin
 - [FastMCP](https://github.com/jlowin/fastmcp) / [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) — MCP server framework
 - [claude-wechat-channel](https://www.npmjs.com/package/claude-wechat-channel) — WeChat bridge for Claude Code
