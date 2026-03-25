@@ -36,7 +36,7 @@ Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using
 
 - **Claude Code** (Pro or Max subscription recommended for heavy usage)
 - **Python 3.12+**
-- **macOS** (some scripts use `osascript`; Linux needs minor tweaks)
+- **macOS or Linux** — Core features (memory, MCP server, dashboard) work on both. Shell scripts (`start-all.sh`, `stop-all.sh`) use `osascript` to open Terminal windows on macOS; on Linux, replace with your terminal emulator or run each service manually.
 - **An always-on machine** — This is a local-first system. All services (memory server, Cloudflare Tunnel, heartbeat, scheduled tasks) run on your machine. If your computer sleeps or shuts down, they stop. For uninterrupted service, consider running on a Mac mini / home server, or disabling sleep (`caffeinate -s` on macOS).
 
 Optional (install only what you need):
@@ -216,14 +216,16 @@ claude-imprint/
 
 ## How It Compares to OpenClaw
 
+OpenClaw is a mature, feature-rich project with a large plugin ecosystem. Claude Imprint takes a different approach — minimal, Claude Code-native, and fully local.
+
 | | OpenClaw | Claude Imprint |
 |---|---|---|
-| Data location | Third-party servers | Your own machine |
-| Account security | Requires authorization | No third-party access |
-| Cost | Platform fee + API costs | Claude Code subscription |
-| Setup difficulty | Low (hosted) | Medium (self-hosted) |
-| Customization | Limited | Fully customizable |
-| Multi-channel | Many | Telegram + WeChat + Claude.ai |
+| Approach | Platform with plugin ecosystem | Lightweight, Claude Code-native |
+| AI models | 20+ providers (Claude, GPT, Gemini...) | Claude only (via Claude Code) |
+| Data location | Depends on provider | Fully local |
+| Multi-channel | 20+ (WhatsApp, Slack, Discord...) | Telegram + WeChat + Claude.ai |
+| Setup | npm install, hosted options available | Self-hosted, manual setup |
+| Best for | Users who want a ready-to-go platform | Users who want full control over a Claude Code-based setup |
 
 ## Acknowledgements
 
