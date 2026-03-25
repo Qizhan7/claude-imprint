@@ -37,6 +37,7 @@ Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using
 - **Claude Code** (Pro or Max subscription recommended for heavy usage)
 - **Python 3.12+**
 - **macOS** (some scripts use `osascript`; Linux needs minor tweaks)
+- **An always-on machine** — This is a local-first system. All services (memory server, Cloudflare Tunnel, heartbeat, scheduled tasks) run on your machine. If your computer sleeps or shuts down, they stop. For uninterrupted service, consider running on a Mac mini / home server, or disabling sleep (`caffeinate -s` on macOS).
 
 Optional:
 - **Ollama + bge-m3** — for semantic vector search (works without it, keyword-only)
