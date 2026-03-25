@@ -6,7 +6,7 @@ Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), but using
 
 ## Features
 
-- **Unified Memory Across Claude Code and Claude.ai** — The same SQLite memory backend serves both Claude Code (via stdio MCP) and Claude.ai chat (via HTTP MCP + Cloudflare Tunnel). Memories saved in one are instantly available in the other. One brain, multiple interfaces.
+- **Unified Memory Across Claude Code and Claude.ai** — The same SQLite memory backend serves both Claude Code (local MCP server) and Claude.ai chat (via Custom Connector + Cloudflare Tunnel). Memories saved in one are instantly available in the other. One brain, multiple interfaces.
 - **Memory System** — SQLite + FTS5 keyword search + Ollama bge-m3 vector embeddings. Hybrid search with time decay. MCP-based: Claude decides when to read/write memories.
 - **Multi-Channel** — Telegram (official plugin), WeChat (via bridge), Claude.ai chat (via Custom Connector). All channels share the same memory.
 - **Scheduled Tasks** — Persistent tasks (morning briefing, reminders, nightly memory consolidation) using Claude Code's built-in scheduler.
@@ -88,7 +88,7 @@ claude --channels plugin:telegram@claude-plugins-official
 
 This is the key feature: **Claude.ai chat and Claude Code share the same memory database.** Memories saved in a chat conversation are searchable from Claude Code, and vice versa.
 
-The memory MCP server supports two transports — stdio (for Claude Code) and HTTP (for Claude.ai via Custom Connector). Both read and write to the same local `memory.db`.
+The memory MCP server supports two modes — local stdio (for Claude Code) and HTTP (for Claude.ai via Custom Connector). Both read and write to the same local `memory.db`.
 
 #### Step 1: Start the HTTP memory server
 
