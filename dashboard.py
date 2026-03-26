@@ -8,6 +8,7 @@ import os
 import subprocess
 import signal
 import json
+import shutil
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -254,6 +255,11 @@ async def api_start(component: str):
     else:
         # Terminal window
         cmd = comp["terminal_cmd"]
+        if shutil.which("osascript") is None:
+            return JSONResponse(
+                {"ok": False, "error": f"osascript not available (macOS only). Run manually: {cmd}"},
+                status_code=501,
+            )
         subprocess.run([
             "osascript", "-e",
             f'tell application "Terminal" to do script "{cmd}"'
@@ -328,6 +334,11 @@ async def api_delete_memory(memory_id: int):
     conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
     conn.commit()
     conn.close()
+    try:
+        from memory_manager import _rebuild_index
+        _rebuild_index()
+    except Exception:
+        pass  # non-critical: MEMORY.md will be rebuilt on next memory write
     return {"ok": True}
 
 
@@ -371,6 +382,11 @@ async def api_update_memory(memory_id: int, request: Request):
         logging.warning(f"Failed to regenerate embedding for memory {memory_id}: {e}")
 
     conn.close()
+    try:
+        from memory_manager import _rebuild_index
+        _rebuild_index()
+    except Exception:
+        pass  # non-critical: MEMORY.md will be rebuilt on next memory write
     return {"ok": True}
 
 

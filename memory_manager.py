@@ -523,8 +523,17 @@ def _execute_task(task_id: int, prompt: str):
              "--output-format", "text", "--max-budget-usd", "1.00"],
             capture_output=True, text=True, timeout=300, env=env,
         )
-        output = result.stdout.strip() or result.stderr.strip() or "(no output)"
-        status = "completed"
+        if result.returncode != 0:
+            stderr_msg = result.stderr.strip()
+            output = f"Process exited with code {result.returncode}"
+            if stderr_msg:
+                output += f": {stderr_msg}"
+            elif result.stdout.strip():
+                output += f"\n{result.stdout.strip()}"
+            status = "error"
+        else:
+            output = result.stdout.strip() or result.stderr.strip() or "(no output)"
+            status = "completed"
     except subprocess.TimeoutExpired:
         output = "Task timed out (5 minutes)"
         status = "timeout"

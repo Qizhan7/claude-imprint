@@ -16,7 +16,7 @@ Features:
 
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ─── Config ──────────────────────────────────────────────
@@ -68,7 +68,8 @@ def parse_conversations(path: str) -> list[dict]:
             if ts_raw:
                 try:
                     if isinstance(ts_raw, (int, float)):
-                        ts = datetime.fromtimestamp(ts_raw)
+                        # Epoch timestamps are always UTC
+                        ts = datetime.utcfromtimestamp(ts_raw)
                     else:
                         for fmt in [
                             "%Y-%m-%dT%H:%M:%S.%fZ",
@@ -85,9 +86,10 @@ def parse_conversations(path: str) -> list[dict]:
                                     break
                                 except Exception:
                                     continue
-                    # Normalize to naive datetime to avoid mixing aware/naive
+                    # Convert to UTC naive datetime to avoid mixing aware/naive
+                    # and preserve absolute time ordering
                     if ts is not None and ts.tzinfo is not None:
-                        ts = ts.replace(tzinfo=None)
+                        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
                 except Exception:
                     pass
 

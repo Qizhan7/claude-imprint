@@ -457,9 +457,15 @@ if __name__ == "__main__":
             CLIENT_SECRET = _creds["client_secret"]
             ACCESS_TOKEN = _creds["access_token"]
         else:
-            CLIENT_ID = ""
-            CLIENT_SECRET = ""
-            ACCESS_TOKEN = ""
+            import os as _os
+            CLIENT_ID = _os.environ.get("OAUTH_CLIENT_ID", "")
+            CLIENT_SECRET = _os.environ.get("OAUTH_CLIENT_SECRET", "")
+            ACCESS_TOKEN = _os.environ.get("OAUTH_ACCESS_TOKEN", "")
+
+        # Pending authorization codes: {code: {redirect_uri, expires_at}}
+        import secrets as _secrets
+        import time as _time
+        _pending_auth_codes: dict = {}
 
         class OAuthMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
@@ -502,20 +508,31 @@ if __name__ == "__main__":
             })
 
         async def oauth_authorize(request: Request):
-            """Auto-approve and redirect back with authorization code"""
+            """Auto-approve and redirect back with a one-time authorization code"""
             from urllib.parse import urlencode
             redirect_uri = request.query_params.get("redirect_uri", "")
             state = request.query_params.get("state", "")
-            code = ACCESS_TOKEN
+            if not redirect_uri:
+                return JSONResponse({"error": "missing redirect_uri"}, status_code=400)
+            # Generate a random one-time auth code (not the access token)
+            code = _secrets.token_urlsafe(32)
+            _pending_auth_codes[code] = {
+                "redirect_uri": redirect_uri,
+                "expires_at": _time.time() + 300,  # 5 minutes
+            }
             params = {"code": code, "state": state}
             from starlette.responses import RedirectResponse
             return RedirectResponse(f"{redirect_uri}?{urlencode(params)}")
 
         async def oauth_token(request: Request):
             """OAuth 2.0 token endpoint"""
+            from urllib.parse import unquote_plus
             body = await request.body()
             try:
-                params = dict(x.split("=") for x in body.decode().split("&"))
+                params = {
+                    k: unquote_plus(v)
+                    for k, v in (x.split("=", 1) for x in body.decode().split("&") if "=" in x)
+                }
             except Exception:
                 try:
                     params = _json.loads(body)
@@ -523,22 +540,45 @@ if __name__ == "__main__":
                     return JSONResponse({"error": "invalid_request"}, status_code=400)
 
             grant_type = params.get("grant_type", "")
-            if (grant_type == "client_credentials"
-                and params.get("client_id") == CLIENT_ID
-                and params.get("client_secret") == CLIENT_SECRET):
+
+            # Client credentials grant — requires valid client_id + secret
+            if grant_type == "client_credentials":
+                if (CLIENT_ID and CLIENT_SECRET
+                        and params.get("client_id") == CLIENT_ID
+                        and params.get("client_secret") == CLIENT_SECRET):
+                    return JSONResponse({
+                        "access_token": ACCESS_TOKEN,
+                        "token_type": "bearer",
+                        "expires_in": 86400,
+                    })
+                return JSONResponse({"error": "invalid_client"}, status_code=401)
+
+            # Authorization code grant — validate code, redirect_uri, and credentials
+            if grant_type == "authorization_code":
+                code = params.get("code", "")
+                # Expire stale codes
+                now = _time.time()
+                expired = [k for k, v in _pending_auth_codes.items() if v["expires_at"] < now]
+                for k in expired:
+                    del _pending_auth_codes[k]
+
+                pending = _pending_auth_codes.pop(code, None)  # one-time use
+                if not pending:
+                    return JSONResponse({"error": "invalid_grant", "error_description": "unknown or expired code"}, status_code=400)
+                if params.get("redirect_uri", "") != pending["redirect_uri"]:
+                    return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, status_code=400)
+                # Validate client credentials when configured
+                if CLIENT_ID and CLIENT_SECRET:
+                    if (params.get("client_id") != CLIENT_ID
+                            or params.get("client_secret") != CLIENT_SECRET):
+                        return JSONResponse({"error": "invalid_client"}, status_code=401)
                 return JSONResponse({
                     "access_token": ACCESS_TOKEN,
                     "token_type": "bearer",
                     "expires_in": 86400,
                 })
-            if (grant_type == "authorization_code"
-                and params.get("code") == ACCESS_TOKEN):
-                return JSONResponse({
-                    "access_token": ACCESS_TOKEN,
-                    "token_type": "bearer",
-                    "expires_in": 86400,
-                })
-            return JSONResponse({"error": "invalid_client"}, status_code=401)
+
+            return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
 
         app.routes.insert(0, Route("/.well-known/oauth-protected-resource", oauth_protected_resource, methods=["GET"]))
         app.routes.insert(1, Route("/.well-known/oauth-authorization-server", oauth_metadata, methods=["GET"]))
