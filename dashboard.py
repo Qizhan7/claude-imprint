@@ -634,6 +634,22 @@ async def dashboard():
     margin-top: 4px;
   }
   .log-btn:hover { border-color: #B96748; color: #B96748; }
+  .lang-btn {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #FFFFFF;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .lang-btn:hover { background: rgba(255,255,255,0.25); }
+  .header { position: relative; }
   .tasks-section {
     max-width: 900px;
     margin: 20px auto;
@@ -779,6 +795,7 @@ async def dashboard():
 <div class="header">
   <h1>✨ Claude Imprint</h1>
   <div class="subtitle" id="auth-status">Loading...</div>
+  <button class="lang-btn" onclick="toggleLang()" title="Switch language">🌐 <span id="lang-label">中文</span></button>
 </div>
 
 <div class="grid" id="components"></div>
@@ -853,13 +870,109 @@ async def dashboard():
 </div>
 
 <script>
+// ─── i18n ───
+const i18n = {
+  en: {
+    loading: 'Loading...',
+    running: 'Running', stopped: 'Stopped',
+    terminal: 'Terminal', background: 'Background',
+    logs: 'Logs',
+    tunnelUrl: 'Tunnel URL', memories: 'Memories', todayLogs: "Today's Logs",
+    notRunning: 'Not running',
+    heatmapTitle: '📊 Interaction Heatmap',
+    heatmapSub: 'Darker = more activity that day',
+    less: 'Less', more: 'More',
+    interactions: 'interactions', quietDay: 'quiet day',
+    scheduledTasks: '⏰ Scheduled Tasks',
+    noTasks: 'No scheduled tasks',
+    remoteLog: '🔧 Remote Tool Log',
+    remoteLogSub: 'Tool calls from Claude.ai chat',
+    noRemote: 'No remote calls yet',
+    memoryTitle: '🧠 Memory',
+    searchPlaceholder: 'Search memories...',
+    noMemories: 'No memories yet',
+    edit: 'Edit', delete: 'Delete', cancel: 'Cancel', save: 'Save',
+    editMemory: '✏️ Edit Memory',
+    importance: 'Importance 1-10',
+    confirmDelete: 'Delete this memory?',
+    noData: 'No data',
+    days: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
+    months: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+  },
+  zh: {
+    loading: '加载中...',
+    running: '运行中', stopped: '已停止',
+    terminal: '终端', background: '后台',
+    logs: '日志',
+    tunnelUrl: '隧道地址', memories: '记忆数', todayLogs: '今日日志',
+    notRunning: '未运行',
+    heatmapTitle: '📊 互动热力图',
+    heatmapSub: '颜色越深 = 当天互动越多',
+    less: '少', more: '多',
+    interactions: '次互动', quietDay: '无互动',
+    scheduledTasks: '⏰ 定时任务',
+    noTasks: '暂无定时任务',
+    remoteLog: '🔧 远程工具日志',
+    remoteLogSub: '来自 Claude.ai chat 的工具调用',
+    noRemote: '暂无远程调用',
+    memoryTitle: '🧠 记忆库',
+    searchPlaceholder: '搜索记忆...',
+    noMemories: '暂无记忆',
+    edit: '编辑', delete: '删除', cancel: '取消', save: '保存',
+    editMemory: '✏️ 编辑记忆',
+    importance: '重要性 1-10',
+    confirmDelete: '确定删除这条记忆？',
+    noData: '暂无数据',
+    days: ['日','一','二','三','四','五','六'],
+    months: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+  }
+};
+let lang = localStorage.getItem('imprint-lang') || 'en';
+function t(key) { return i18n[lang][key] || i18n.en[key] || key; }
+function toggleLang() {
+  lang = lang === 'en' ? 'zh' : 'en';
+  localStorage.setItem('imprint-lang', lang);
+  document.getElementById('lang-label').textContent = lang === 'en' ? '中文' : 'EN';
+  refreshAll();
+}
+function applyStaticI18n() {
+  document.getElementById('lang-label').textContent = lang === 'en' ? '中文' : 'EN';
+  document.querySelector('.heatmap-section h2').textContent = t('heatmapTitle');
+  document.querySelector('.heatmap-section .heatmap-subtitle').textContent = t('heatmapSub');
+  const legend = document.querySelectorAll('.heatmap-legend > span');
+  if (legend.length >= 2) { legend[0].textContent = t('less'); legend[legend.length-1].textContent = t('more'); }
+  const taskSections = document.querySelectorAll('.tasks-section h2');
+  if (taskSections[0]) taskSections[0].textContent = t('scheduledTasks');
+  if (taskSections[1]) taskSections[1].textContent = t('remoteLog');
+  const remoteSub = document.querySelectorAll('.tasks-section .heatmap-subtitle');
+  if (remoteSub[0]) remoteSub[0].textContent = t('remoteLogSub');
+  document.querySelector('.memory-section h2').textContent = t('memoryTitle');
+  document.getElementById('memory-search').placeholder = t('searchPlaceholder');
+  document.querySelector('.modal h3').textContent = t('editMemory');
+  document.getElementById('edit-importance').placeholder = t('importance');
+  const modalBtns = document.querySelectorAll('.modal-buttons button');
+  if (modalBtns[0]) modalBtns[0].textContent = t('cancel');
+  if (modalBtns[1]) modalBtns[1].textContent = t('save');
+  const infoLabels = document.querySelectorAll('.info-chip .label');
+  if (infoLabels[0]) infoLabels[0].textContent = t('tunnelUrl');
+  if (infoLabels[1]) infoLabels[1].textContent = t('memories');
+  if (infoLabels[2]) infoLabels[2].textContent = t('todayLogs');
+}
+function refreshAll() {
+  applyStaticI18n();
+  fetchStatus();
+  fetchHeatmap();
+  searchMemories();
+  fetchRemoteTools();
+}
+
 async function fetchStatus() {
   try {
     const r = await fetch('/api/status');
     const data = await r.json();
     renderComponents(data.components);
     renderTasks(data.tasks || []);
-    document.getElementById('tunnel-url').textContent = data.tunnel_url ? data.tunnel_url : 'Not running';
+    document.getElementById('tunnel-url').textContent = data.tunnel_url ? data.tunnel_url : t('notRunning');
     document.getElementById('memory-count').textContent = data.memory.count;
     document.getElementById('today-logs').textContent = data.memory.today_logs;
   } catch(e) {
@@ -872,9 +985,9 @@ function renderComponents(components) {
   let html = '';
   for (const [key, comp] of Object.entries(components)) {
     const dotClass = comp.running ? 'on' : 'off';
-    const statusText = comp.running ? 'Running' : 'Stopped';
+    const statusText = comp.running ? t('running') : t('stopped');
     const checked = comp.running ? 'checked' : '';
-    const typeLabel = comp.type === 'terminal' ? 'Terminal' : 'Background';
+    const typeLabel = comp.type === 'terminal' ? t('terminal') : t('background');
     html += `
       <div class="card">
         <div class="card-header">
@@ -889,7 +1002,7 @@ function renderComponents(components) {
         </div>
         <div class="card-info">
           ${statusText} · ${typeLabel}${comp.pid ? ' · PID ' + comp.pid : ''}
-          ${comp.type === 'background' ? '<br><button class="log-btn" onclick="toggleLog(\\'' + key + '\\')">Logs</button><div class="log-box" id="log-' + key + '"></div>' : ''}
+          ${comp.type === 'background' ? '<br><button class="log-btn" onclick="toggleLog(\\'' + key + '\\')">' + t('logs') + '</button><div class="log-box" id="log-' + key + '"></div>' : ''}
         </div>
       </div>`;
   }
@@ -899,7 +1012,7 @@ function renderComponents(components) {
 function renderTasks(tasks) {
   const list = document.getElementById('tasks-list');
   if (!tasks.length) {
-    list.innerHTML = '<div style="color:#B0AEA5;text-align:center;padding:12px">No scheduled tasks</div>';
+    list.innerHTML = '<div style="color:#B0AEA5;text-align:center;padding:12px">' + t('noTasks') + '</div>';
     return;
   }
   list.innerHTML = tasks.map(t => `
@@ -944,7 +1057,7 @@ function renderMemories(memories) {
   allMemories = memories;
   const list = document.getElementById('memory-list');
   if (!memories.length) {
-    list.innerHTML = '<div style="color:#666;padding:20px;text-align:center">No memories yet</div>';
+    list.innerHTML = '<div style="color:#666;padding:20px;text-align:center">' + t('noMemories') + '</div>';
     return;
   }
   list.innerHTML = memories.map(m => `
@@ -952,15 +1065,15 @@ function renderMemories(memories) {
       <div style="padding-right:80px;">${m.content.replace(/</g,'&lt;')}</div>
       <div class="memory-meta">[${m.category}|${m.source}] ${m.created_at} · importance ${m.importance}</div>
       <div class="memory-actions">
-        <button onclick="openEditModal(${m.id})">Edit</button>
-        <button class="del" onclick="deleteMemory(${m.id})">Delete</button>
+        <button onclick="openEditModal(${m.id})">${t('edit')}</button>
+        <button class="del" onclick="deleteMemory(${m.id})">${t('delete')}</button>
       </div>
     </div>
   `).join('');
 }
 
 async function deleteMemory(id) {
-  if (!confirm('Delete this memory?')) return;
+  if (!confirm(t('confirmDelete'))) return;
   await fetch('/api/memories/' + id, {method: 'DELETE'});
   searchMemories();
 }
@@ -1006,7 +1119,7 @@ async function fetchHeatmap() {
 function renderHeatmap(days) {
   const container = document.getElementById('heatmap');
   if (!days || !days.length) {
-    container.innerHTML = '<div style="color:#B0AEA5;text-align:center">No data</div>';
+    container.innerHTML = '<div style="color:#B0AEA5;text-align:center">' + t('noData') + '</div>';
     return;
   }
 
@@ -1046,14 +1159,14 @@ function renderHeatmap(days) {
     if (realDay) {
       const m = realDay.date.substring(0, 7);
       if (m !== lastMonth) {
-        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const monthNames = t('months');
         months.push({ index: wi, label: monthNames[parseInt(m.split('-')[1]) - 1] });
         lastMonth = m;
       }
     }
   });
 
-  const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dayLabels = t('days');
 
   const totalGridWidth = weeks.length * 15 - 3;
   let html = '<div class="heatmap-months" style="padding-left:32px;display:flex;width:' + totalGridWidth + 'px;">';
@@ -1084,7 +1197,7 @@ function renderHeatmap(days) {
         html += '<div class="heatmap-cell" style="visibility:hidden"></div>';
       } else {
         const lv = level(d.count);
-        const tip = d.date + ': ' + (d.count > 0 ? d.count + ' interactions' : 'quiet day');
+        const tip = d.date + ': ' + (d.count > 0 ? d.count + ' ' + t('interactions') : t('quietDay'));
         html += '<div class="heatmap-cell" data-level="' + lv + '"><span class="tooltip">' + tip + '</span></div>';
       }
     }
@@ -1101,7 +1214,7 @@ async function fetchRemoteTools() {
     const data = await r.json();
     const el = document.getElementById('remote-tools');
     if (!data.tasks || !data.tasks.length) {
-      el.innerHTML = '<div style="color:#B0AEA5">No remote calls yet</div>';
+      el.innerHTML = '<div style="color:#B0AEA5">' + t('noRemote') + '</div>';
       return;
     }
     const icons = {pending:'⏳',running:'🔄',completed:'✅',error:'❌',timeout:'⏰'};
@@ -1126,6 +1239,7 @@ async function fetchRemoteTools() {
 }
 
 // Init
+applyStaticI18n();
 fetchStatus();
 fetchHeatmap();
 searchMemories();
