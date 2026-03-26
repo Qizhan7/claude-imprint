@@ -89,6 +89,7 @@ def send_telegram(text: str, chat_id: str = "") -> str:
             import json as _j
             result = _j.loads(resp.read())
             if result.get("ok"):
+                mem.bus_post("chat", "out", text)
                 return "✅ Message sent to Telegram"
             return f"❌ Telegram API error: {result.get('description', 'unknown')}"
     except Exception as e:
@@ -389,10 +390,27 @@ def morning_briefing(latitude: float = 0, longitude: float = 0,
 
 
 @mcp.tool()
+def message_bus_read(limit: int = 20) -> str:
+    """Read recent cross-channel messages. Every channel (Telegram/WeChat/Chat/CC) logs sent
+    and received messages here. Use this to understand what happened in other channels."""
+    return mem.bus_format(limit)
+
+
+@mcp.tool()
+def message_bus_post(source: str, direction: str, content: str) -> str:
+    """Write a message to the cross-channel message bus.
+    source: telegram/wechat/chat/cc_task/scheduled
+    direction: in (user sent) / out (Claude sent)"""
+    mem.bus_post(source, direction, content)
+    return "✅ Written to message bus"
+
+
+@mcp.tool()
 def cc_execute(prompt: str) -> str:
     """Submit a task for local Claude Code to execute. For: writing code, running scripts, git ops, etc.
     Returns a task_id. Use cc_check(task_id) to check results later."""
     result = mem.submit_task(prompt=prompt, source="chat")
+    mem.bus_post("cc_task", "out", f"[Task submitted] {prompt[:150]}")
     return f"✅ {result['message']}\nUse cc_check(task_id={result['task_id']}) to check results"
 
 

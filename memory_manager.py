@@ -100,6 +100,14 @@ def _init_tables(db: sqlite3.Connection):
             started_at TEXT,
             completed_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS message_bus (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
     """)
 
     # FTS5 full-text index
@@ -531,6 +539,61 @@ def _execute_task(task_id: int, prompt: str):
     )
     db.commit()
     db.close()
+
+    # Write completion summary to message bus
+    summary = output[:100] if len(output) <= 100 else output[:97] + "..."
+    bus_post("cc_task", "out", f"[Task#{task_id} {status}] {summary}")
+
+
+# ─── Message Bus (cross-channel shared context) ─────────
+
+MESSAGE_BUS_LIMIT = int(os.environ.get("MESSAGE_BUS_LIMIT", 40))
+
+
+def bus_post(source: str, direction: str, content: str) -> None:
+    """Write a message to the bus. Auto-prunes old messages beyond limit.
+    source: telegram/wechat/chat/cc_task/scheduled/heartbeat
+    direction: in (user sent) / out (Claude sent)
+    content: message content (auto-truncated to 200 chars)"""
+    if len(content) > 200:
+        content = content[:197] + "..."
+
+    db = _get_db()
+    db.execute(
+        "INSERT INTO message_bus (source, direction, content, created_at) VALUES (?, ?, ?, ?)",
+        (source, direction, content, _now_str()),
+    )
+    # Auto-prune: keep only the most recent N messages
+    db.execute(
+        "DELETE FROM message_bus WHERE id NOT IN (SELECT id FROM message_bus ORDER BY id DESC LIMIT ?)",
+        (MESSAGE_BUS_LIMIT,),
+    )
+    db.commit()
+    db.close()
+
+
+def bus_read(limit: int = 20) -> list[dict]:
+    """Read recent bus messages."""
+    db = _get_db()
+    rows = db.execute(
+        "SELECT source, direction, content, created_at FROM message_bus ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    db.close()
+    # Return in chronological order (oldest first)
+    return [dict(r) for r in reversed(rows)]
+
+
+def bus_format(limit: int = 20) -> str:
+    """Format bus messages for context injection."""
+    messages = bus_read(limit)
+    if not messages:
+        return "(No recent cross-channel messages)"
+    lines = ["# Recent Cross-Channel Messages\n"]
+    for m in messages:
+        arrow = "→" if m["direction"] == "out" else "←"
+        lines.append(f"[{m['created_at']}] [{m['source']}] {arrow} {m['content']}")
+    return "\n".join(lines)
 
 
 # ─── Bank File Index ─────────────────────────────────────

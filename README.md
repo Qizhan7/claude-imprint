@@ -2,7 +2,7 @@
 
 ### Turn Claude Code into your personal assistant that lives across all your devices.
 
-A self-hosted system that extends Claude Code with persistent memory, multi-channel chat, and automation. Talk to Claude from Telegram, WeChat, or Claude.ai — it remembers everything, sets reminders, writes code, and manages your day. All data stays on your machine.
+A self-hosted system that extends Claude Code with persistent memory, multi-channel chat, cross-channel context sharing, and automation. Talk to Claude from Telegram, WeChat, or Claude.ai — it remembers everything, knows what happened across channels, sets reminders, writes code, and manages your day. All data stays on your machine.
 
 Built for **Claude Code Pro/Max subscribers** who want to unlock more from their subscription. Uses only official Claude Code features — no API costs, no third-party authorization. Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), fully local and fully yours.
 
@@ -11,10 +11,15 @@ Built for **Claude Code Pro/Max subscribers** who want to unlock more from their
 ### 🧠 Memory
 - **Custom Memory System (replaces CC's built-in)** — Claude Code's default memory is file-based and basic. This replaces it with SQLite + FTS5 full-text search + bge-m3 vector embeddings. Hybrid retrieval (keyword + semantic + time decay scoring), categorized storage, and daily logs.
 - **Unified Memory Across Claude Code and Claude.ai** — The same SQLite backend serves both Claude Code (local stdio MCP) and Claude.ai chat (HTTP MCP via Cloudflare Tunnel). One brain, multiple interfaces — memories saved in one are instantly searchable from the other.
+- **Categorized Storage** — Memories are tagged by type (facts, events, tasks, experience) and source (cc, telegram, wechat, chat). Search by category or let hybrid search find the best match.
+- **Knowledge Bank** — Long-form structured knowledge in Markdown files (`memory/bank/`). Preferences, relationships, technical experience — all indexed and included in semantic search automatically.
+- **Daily Logs** — Automatic daily journals (`memory/YYYY-MM-DD.md`). Pre-compaction hooks capture conversation context before it's compressed. Nothing gets lost.
+- **Auto-generated Index** — `MEMORY.md` is rebuilt on every write, giving Claude a quick snapshot of what's stored without querying the database.
 
 ### 💬 Multi-Channel
 - **Chat From Anywhere** — Telegram, WeChat, Claude.ai, or any future platform. Each channel is independent and optional — install one or all. They all share the same memory.
 - **Cross-Channel Memory** — Ask Claude to recall something from Telegram while you're on Claude.ai. What you said on your phone is available at your computer.
+- **Message Bus (Cross-Channel Context)** — Messages flow in from Telegram, WeChat, Claude.ai, scheduled tasks — Claude keeps a shared timeline of what happened where. When you switch devices or channels, it already knows the context. No need to repeat yourself.
 
 ### 🎮 Remote Control (via Claude.ai Chat)
 - **Chat-to-Code** — Tell Claude.ai to write code, run scripts, fix bugs, or manage git repos on your computer. Claude.ai submits the task → local Claude Code executes it → results come back. Your phone becomes a remote terminal.
@@ -47,8 +52,10 @@ Built for **Claude Code Pro/Max subscribers** who want to unlock more from their
         Claude Code        Cloudflare Tunnel   Dashboard
         ├── Telegram       → Claude.ai chat    (localhost:3000)
         ├── WeChat            (Custom Connector)
-        ├── Scheduled Tasks
-        └── CLAUDE.md
+        ├── Scheduled Tasks        │
+        └── CLAUDE.md              │
+                │                  │
+                └──── message_bus ──┘  ← cross-channel context
 ```
 
 ## Prerequisites
@@ -228,6 +235,9 @@ Add to Claude.ai **Custom Instructions** or **Project Instructions**:
 | `read_webpage` | Fetch & extract text from a URL |
 | `spotify_control` | Play/pause/skip/volume (macOS) |
 | `morning_briefing` | Weather + calendar + tasks → Telegram |
+| `message_bus_read` | Read recent cross-channel message history |
+| `message_bus_post` | Write to the shared cross-channel context |
+| `memory_daily_log` | Append to today's daily log |
 
 ---
 
@@ -351,8 +361,10 @@ claude-imprint/
 ├── SOUL.md              # Heartbeat personality rules
 ├── HEARTBEAT.md         # Heartbeat checklist
 ├── MEMORY.md            # Auto-generated memory index
-├── start-all.sh         # Start all services
+├── start-all.sh         # Start all services (macOS Terminal)
 ├── stop-all.sh          # Stop all services
+├── start.sh             # Start core services (memory HTTP + tunnel)
+├── stop.sh              # Stop core services
 └── requirements.txt
 ```
 
