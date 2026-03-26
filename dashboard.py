@@ -41,13 +41,13 @@ COMPONENTS = {
     "telegram": {
         "name": "📨 Telegram",
         "grep_pattern": "channels plugin:telegram",
-        "terminal_cmd": "claude --channels plugin:telegram@claude-plugins-official",
+        "terminal_cmd": "claude --permission-mode auto --channels plugin:telegram@claude-plugins-official",
         "type": "terminal",
     },
     "wechat": {
         "name": "📱 WeChat",
         "grep_pattern": "dangerously-load-development-channels server:wechat",
-        "terminal_cmd": "claude --dangerously-load-development-channels server:wechat",
+        "terminal_cmd": "claude --permission-mode auto --dangerously-load-development-channels server:wechat",
         "type": "terminal",
     },
 }

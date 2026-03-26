@@ -120,7 +120,8 @@ async def run_heartbeat():
         }
     }})
     cmd.extend(["--mcp-config", mcp_config])
-    cmd.append("--dangerously-skip-permissions")
+    # Auto mode: AI classifier approves safe actions, blocks risky ones
+    cmd.extend(["--permission-mode", "auto"])
 
     env = {**os.environ}
     env.pop("CLAUDECODE", None)

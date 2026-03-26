@@ -43,7 +43,7 @@ elif ! command -v claude &>/dev/null; then
     echo "   📨 Telegram: claude not found, skip"
 else
     echo "📨 Starting Telegram..."
-    osascript -e 'tell application "Terminal" to do script "claude --channels plugin:telegram@claude-plugins-official"' 2>/dev/null
+    osascript -e 'tell application "Terminal" to do script "claude --permission-mode auto --channels plugin:telegram@claude-plugins-official"' 2>/dev/null
     echo "   ✅ Telegram window opened"
 fi
 
@@ -54,7 +54,7 @@ elif ! npm list -g claude-wechat-channel &>/dev/null 2>&1; then
     echo "   📱 WeChat: claude-wechat-channel not installed, skip"
 else
     echo "📱 Starting WeChat..."
-    osascript -e 'tell application "Terminal" to do script "claude --dangerously-load-development-channels server:wechat"' 2>/dev/null
+    osascript -e 'tell application "Terminal" to do script "claude --permission-mode auto --dangerously-load-development-channels server:wechat"' 2>/dev/null
     echo "   ✅ WeChat window opened"
 fi
 
