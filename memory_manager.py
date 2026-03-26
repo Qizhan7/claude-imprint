@@ -89,6 +89,17 @@ def _init_tables(db: sqlite3.Connection):
             embedding BLOB,
             file_mtime REAL NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS cc_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            result TEXT,
+            source TEXT DEFAULT 'chat',
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT
+        );
     """)
 
     # FTS5 full-text index
@@ -423,6 +434,99 @@ def record_notification(content: str):
     db.execute(
         "INSERT INTO notifications (content, created_at) VALUES (?, ?)",
         (content, _now_str()),
+    )
+    db.commit()
+    db.close()
+
+
+# ─── CC Remote Tasks ────────────────────────────────────
+
+def submit_task(prompt: str, source: str = "chat") -> dict:
+    """Submit a task for CC to execute (async)."""
+    db = _get_db()
+    db.execute(
+        "INSERT INTO cc_tasks (prompt, status, source, created_at) VALUES (?, 'pending', ?, ?)",
+        (prompt, source, _now_str()),
+    )
+    task_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+    db.commit()
+    db.close()
+
+    import threading
+    t = threading.Thread(target=_execute_task, args=(task_id, prompt), daemon=True)
+    t.start()
+
+    return {"task_id": task_id, "status": "pending", "message": f"Task submitted (ID: {task_id}), CC is running"}
+
+
+def check_task(task_id: int) -> dict:
+    """Check task status and result."""
+    db = _get_db()
+    row = db.execute(
+        "SELECT id, prompt, status, result, created_at, started_at, completed_at FROM cc_tasks WHERE id = ?",
+        (task_id,),
+    ).fetchone()
+    db.close()
+    if not row:
+        return {"error": f"Task {task_id} not found"}
+    return {
+        "task_id": row["id"],
+        "prompt": row["prompt"][:100] + ("..." if len(row["prompt"]) > 100 else ""),
+        "status": row["status"], "result": row["result"],
+        "created_at": row["created_at"], "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
+def list_tasks(limit: int = 10) -> list[dict]:
+    """List recent tasks."""
+    db = _get_db()
+    rows = db.execute(
+        "SELECT id, prompt, status, created_at, completed_at FROM cc_tasks ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    db.close()
+    return [{
+        "task_id": r["id"],
+        "prompt": r["prompt"][:80] + ("..." if len(r["prompt"]) > 80 else ""),
+        "status": r["status"], "created_at": r["created_at"], "completed_at": r["completed_at"],
+    } for r in rows]
+
+
+def _execute_task(task_id: int, prompt: str):
+    """Execute a CC task in background (subprocess)."""
+    import subprocess
+    import os as _os
+
+    db = _get_db()
+    db.execute("UPDATE cc_tasks SET status = 'running', started_at = ? WHERE id = ?", (_now_str(), task_id))
+    db.commit()
+    db.close()
+
+    claude_bin = _os.path.expanduser("~/.local/bin/claude")
+    env = {**_os.environ}
+    env.pop("CLAUDECODE", None)
+    env["PATH"] = _os.path.expanduser("~/.local/bin") + ":" + _os.path.expanduser("~/.bun/bin") + ":" + env.get("PATH", "")
+
+    try:
+        result = subprocess.run(
+            [claude_bin, "-p", prompt, "--permission-mode", "auto",
+             "--output-format", "text", "--max-budget-usd", "1.00"],
+            capture_output=True, text=True, timeout=300, env=env,
+        )
+        output = result.stdout.strip() or result.stderr.strip() or "(no output)"
+        status = "completed"
+    except subprocess.TimeoutExpired:
+        output = "Task timed out (5 minutes)"
+        status = "timeout"
+    except Exception as e:
+        output = f"Execution error: {str(e)}"
+        status = "error"
+
+    db = _get_db()
+    db.execute(
+        "UPDATE cc_tasks SET status = ?, result = ?, completed_at = ? WHERE id = ?",
+        (status, output, _now_str(), task_id),
     )
     db.commit()
     db.close()

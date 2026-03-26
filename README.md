@@ -73,22 +73,26 @@ python3 dashboard.py
 
 > **Note:** This guide uses `python3` throughout. If you have multiple Python versions, replace with `python3` or whichever version you have (3.11+ required).
 
-## Setup Guide
+## Setup Guide — Pick What You Need
 
-### 1. Memory System
+After running Quick Start, you have the memory system working locally. Choose which modules to add:
 
-The memory system works out of the box after registering the MCP server. Claude will automatically use `memory_remember` and `memory_search` tools.
+| I want to... | Module |
+|---|---|
+| Just have persistent memory in Claude Code | ✅ Already done (Quick Start) |
+| Connect Claude.ai chat to the same memory | → [Module A: Chat Integration](#module-a-chat-integration) |
+| Talk to Claude from Telegram | → [Module B: Telegram](#module-b-telegram) |
+| Talk to Claude from WeChat | → [Module C: WeChat](#module-c-wechat) |
+| Let Claude.ai control my computer | → [Module A](#module-a-chat-integration) (includes `cc_execute`) |
+| Automated heartbeat / reminders | → [Module D: Automation](#module-d-automation) |
+| Dashboard to manage everything | → [Module E: Dashboard](#module-e-dashboard) |
+| Import old Claude.ai conversations | → [Module F: Chat Import](#module-f-chat-import) |
 
-To enable semantic search (optional):
-```bash
-# Install Ollama
-brew install ollama
-ollama pull bge-m3
-```
+---
 
-### 2. Write Your CLAUDE.md
+### First: Write Your CLAUDE.md
 
-Create `~/.claude/CLAUDE.md` — this is what makes Claude yours. Here's a minimal starting template:
+Before setting up any module, create `~/.claude/CLAUDE.md`. This is what makes Claude *yours*:
 
 ```markdown
 # My Assistant
@@ -99,81 +103,62 @@ Create `~/.claude/CLAUDE.md` — this is what makes Claude yours. Here's a minim
 - Languages: [e.g., English, Chinese]
 
 ## Personality
-- [How you want Claude to communicate: casual? formal? concise?]
-- [Any preferences: no emojis, direct answers, etc.]
+- [casual? formal? concise? playful?]
 
 ## Memory Rules
 - Save important information using memory_remember
 - Search memory before saying "I don't know"
-- Log significant events to the daily log
 
 ## Notification Rules
 - Telegram chat_id: [your chat ID]
-- Quiet hours: 23:00-07:00 (no proactive messages)
-- Important events: notify immediately
-- Routine updates: batch and wait until asked
+- Quiet hours: 23:00-07:00
 ```
 
-See the [Customization section](#customization-the-md-files) below for how this file relates to the others.
+See [Customization: The .md Files](#customization-the-md-files) for the full file structure.
 
-### 3. Pre-compaction Hook (recommended)
+### First: Pre-compaction Hook (recommended)
 
-This hook automatically saves conversation context before Claude Code compresses the context window, so important details don't get lost:
+Saves conversation context before Claude Code compresses the window:
 
 ```bash
-# Register the hook in your Claude Code settings
 claude settings add-hook PreCompact "bash $(pwd)/hooks/pre-compact-flush.sh"
 ```
 
-Or manually add to `~/.claude/settings.json`:
-```json
-{
-  "hooks": {
-    "PreCompact": [
-      { "command": "bash /path/to/claude-imprint/hooks/pre-compact-flush.sh" }
-    ]
-  }
-}
+### Optional: Semantic Search
+
+Adds AI-powered meaning-based search on top of keyword search:
+```bash
+brew install ollama && ollama pull bge-m3
 ```
 
-### 4. Telegram (optional)
+---
+
+### Module A: Chat Integration
+
+**What you get:** Claude.ai chat shares the same memory as Claude Code. Plus: `send_telegram` (direct messaging), `cc_execute` (remote code execution), `system_status`, `read_webpage`, `spotify_control`, `morning_briefing` — all accessible from Claude.ai.
+
+**You need:** A domain (or free Cloudflare quick tunnel), Cloudflare account.
+
+#### Step 1: Start the HTTP server
 
 ```bash
-# Configure your bot token
-claude /telegram:configure
+# Set env vars for Telegram integration (optional but recommended)
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
 
-# Start Telegram channel
-claude --channels plugin:telegram@claude-plugins-official
-```
+# For weather in morning briefing (optional)
+export WEATHER_LAT="40.71"    # your latitude
+export WEATHER_LON="-74.01"   # your longitude
+export WEATHER_TZ="America/New_York"
 
-### 5. WeChat (optional)
-
-```bash
-# Install the WeChat bridge
-npm install -g claude-wechat-channel
-
-# Add to your .mcp.json (see .mcp.json.example)
-# Start WeChat channel
-claude --dangerously-load-development-channels server:wechat
-```
-
-### 6. Claude.ai Chat Integration (optional)
-
-This is the key feature: **Claude.ai chat and Claude Code share the same memory database.** Memories saved in a chat conversation are searchable from Claude Code, and vice versa.
-
-The memory MCP server supports two modes — local stdio (for Claude Code) and HTTP (for Claude.ai via Custom Connector). Both read and write to the same local `memory.db`.
-
-#### Step 1: Start the HTTP memory server
-
-```bash
+# Start
 python3 memory_mcp.py --http
 # Runs on localhost:8000
 ```
 
-This runs alongside the stdio server that Claude Code already uses. They share the same database (SQLite WAL mode handles concurrent access).
-
 #### Step 2: Expose via Cloudflare Tunnel
 
+**Option A — Permanent tunnel (recommended)**
 ```bash
 brew install cloudflare/cloudflare/cloudflared
 cloudflared tunnel login
@@ -181,7 +166,7 @@ cloudflared tunnel create my-tunnel
 cloudflared tunnel route dns my-tunnel memory.yourdomain.com
 ```
 
-Or use a free quick tunnel (temporary URL, changes on restart):
+**Option B — Free quick tunnel (no domain needed, URL changes on restart)**
 ```bash
 cloudflared tunnel --url http://localhost:8000
 ```
@@ -205,74 +190,118 @@ print(f'Client ID: {creds[\"client_id\"]}')
 
 #### Step 4: Add Custom Connector in Claude.ai
 
-1. Go to **Claude.ai → Settings → Connectors → Add Custom Connector**
+1. **Claude.ai → Settings → Connectors → Add Custom Connector**
 2. Enter your tunnel URL
-3. In Advanced Settings, enter the OAuth Client ID and Client Secret
+3. In Advanced Settings, enter OAuth Client ID and Client Secret
 4. Click Add — done
 
-Claude.ai now has access to `memory_remember`, `memory_search`, `memory_forget`, `memory_daily_log`, and `memory_list` — the exact same tools Claude Code uses.
+#### Step 5: Teach Claude.ai to use it
 
-#### Step 5: Teach Claude.ai to use the memory
+Add to Claude.ai **Custom Instructions** or **Project Instructions**:
 
-Adding the connector gives Claude.ai access to the tools, but it won't know *when* to use them unless you tell it. A few options:
+> *Use `memory_search` before answering questions about me. Use `memory_remember` to save important info. Use `send_telegram` to message me. Use `cc_execute` to run tasks on my computer.*
 
-- **Project instructions** (recommended): Create a Claude.ai Project and add instructions like *"Use `memory_search` to recall context. Use `memory_remember` to save important information."*
-- **Custom instructions**: In Claude.ai → Settings → Custom Instructions, add a note about using the memory tools.
-- **Just ask**: You can also tell Claude in any conversation to remember or search — it will see the available tools and use them.
+**Available tools via Chat Integration:**
 
-Once set up, the workflow is seamless: chat on Claude.ai during the day, switch to Claude Code for coding — same memories, no sync needed.
+| Tool | What it does |
+|---|---|
+| `memory_remember/search/forget/list` | Read & write shared memory |
+| `send_telegram` | Send text message to Telegram |
+| `send_telegram_photo` | Send file/photo to Telegram |
+| `cc_execute` | Run a task on your computer via Claude Code |
+| `cc_check` / `cc_tasks` | Check task status |
+| `system_status` | CPU, RAM, disk, service health |
+| `read_webpage` | Fetch & extract text from a URL |
+| `spotify_control` | Play/pause/skip/volume (macOS) |
+| `morning_briefing` | Weather + calendar + tasks → Telegram |
 
-### 7. Dashboard
+---
+
+### Module B: Telegram
+
+**What you get:** Talk to Claude from Telegram. Full Claude Code capabilities.
+
+**You need:** A Telegram bot token (from [@BotFather](https://t.me/BotFather)).
+
+```bash
+# 1. Configure bot token
+claude /telegram:configure
+
+# 2. Start (with auto-approve for safe operations)
+claude --permission-mode auto --channels plugin:telegram@claude-plugins-official
+```
+
+> **Tip:** Get your chat ID by messaging [@userinfobot](https://t.me/userinfobot) on Telegram.
+
+---
+
+### Module C: WeChat
+
+**What you get:** Talk to Claude from WeChat.
+
+**You need:** npm, a WeChat account.
+
+```bash
+# 1. Install bridge
+npm install -g claude-wechat-channel
+
+# 2. Configure (see .mcp.json.example)
+
+# 3. Start
+claude --permission-mode auto --dangerously-load-development-channels server:wechat
+# Scan QR code with WeChat to link
+```
+
+---
+
+### Module D: Automation
+
+**What you get:** Heartbeat agent (periodic checks + proactive notifications), scheduled tasks (morning briefing, reminders).
+
+**You need:** Telegram set up (Module B) for notifications.
+
+```bash
+# Start heartbeat agent
+python3 agent.py
+
+# Or with custom interval
+HEARTBEAT_INTERVAL=300 python3 agent.py   # 5-min for testing
+```
+
+Edit `SOUL.md` (personality) and `HEARTBEAT.md` (checklist) to customize behavior.
+
+**Scheduled tasks** — ask Claude Code directly:
+```
+> Create a scheduled task that sends me a morning briefing at 8am via Telegram
+> Create a reminder to drink water every day at 3pm
+```
+
+Tasks persist in `~/.claude/scheduled-tasks/` and survive restarts.
+
+---
+
+### Module E: Dashboard
+
+**What you get:** Web UI to manage everything — start/stop services, browse memories, view scheduled tasks, interaction heatmap.
 
 ```bash
 python3 dashboard.py
-# Open http://localhost:3000
+# → http://localhost:3000
 ```
 
-Manages all components from one page: start/stop services, browse memories, view scheduled tasks, interaction heatmap.
+---
 
-### 8. Heartbeat Agent (optional)
+### Module F: Chat Import
 
-The heartbeat agent periodically wakes up Claude Code to perform automated checks (calendar, reminders, proactive notifications).
-
-```bash
-# Start the agent
-python3 agent.py
-
-# Or with a custom interval (default: 15 minutes)
-HEARTBEAT_INTERVAL=300 python3 agent.py   # 5-minute interval for testing
-```
-
-The agent reads `SOUL.md` (personality) and `HEARTBEAT.md` (checklist) to know what to check and how to behave. Edit these files to customize its behavior.
-
-> **Tip:** Use `start-all.sh` to launch the heartbeat agent alongside other services, or `start.sh` to run just the agent.
-
-### 9. Scheduled Tasks
-
-Create persistent scheduled tasks through Claude Code:
-```
-> Create a scheduled task that sends me a morning briefing at 8am via Telegram
-```
-
-Tasks survive restarts and are stored in `~/.claude/scheduled-tasks/`.
-
-### 10. Import Chat History (optional)
-
-Already have months of conversations on Claude.ai? You can import them into the memory system so Claude remembers everything from day one.
+**What you get:** Import old Claude.ai conversations into the memory system.
 
 ```bash
 # 1. Export from Claude.ai: Settings → Privacy → Export Data
-# 2. Unzip the export, find conversations.json
-# 3. Run the cleaner to split into manageable sessions
+# 2. Unzip, find conversations.json
 python3 chat_cleaner.py ~/Downloads/claude-export/conversations.json
-```
 
-This splits your conversations into session files (in `chat_sessions/`), broken by 6-hour silence gaps. Long sessions are further split with overlap to preserve context.
-
-Then feed each session to Claude Code for memory extraction:
-```bash
-# For each session file, ask Claude Code to read and remember the important parts
-claude "Read chat_sessions/session_001.txt and save any important facts, preferences, or events to memory using memory_remember"
+# 3. Feed sessions to Claude Code for memory extraction
+claude "Read chat_sessions/session_001.txt and save important facts to memory using memory_remember"
 ```
 
 ## Configuration
@@ -283,9 +312,13 @@ claude "Read chat_sessions/session_001.txt and save any important facts, prefere
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `EMBED_MODEL` | `bge-m3` | Embedding model name |
 | `HEARTBEAT_INTERVAL` | `900` | Heartbeat interval in seconds |
-| `TELEGRAM_CHAT_ID` | (empty) | Your Telegram chat ID for notifications |
+| `TELEGRAM_BOT_TOKEN` | (empty) | Telegram bot token (from @BotFather) |
+| `TELEGRAM_CHAT_ID` | (empty) | Your Telegram chat ID (from @userinfobot) |
 | `QUIET_START` | `23` | Quiet hours start (no proactive messages) |
 | `QUIET_END` | `7` | Quiet hours end |
+| `WEATHER_LAT` | `0` | Latitude for weather in morning briefing |
+| `WEATHER_LON` | `0` | Longitude for weather in morning briefing |
+| `WEATHER_TZ` | `UTC` | Timezone name for weather (e.g., `America/New_York`) |
 
 ## File Structure
 
