@@ -14,6 +14,16 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load Telegram env vars from .env file
+_tg_env = Path.home() / ".claude" / "channels" / "telegram" / ".env"
+if _tg_env.exists():
+    for _line in _tg_env.read_text().splitlines():
+        _line = _line.strip()
+        if "=" in _line and not _line.startswith("#"):
+            _k, _v = _line.split("=", 1)
+            if not os.environ.get(_k):
+                os.environ[_k] = _v.strip()
+
 from mcp.server.fastmcp import FastMCP
 import memory_manager as mem
 
@@ -94,6 +104,106 @@ def send_telegram(text: str, chat_id: str = "") -> str:
             return f"❌ Telegram API error: {result.get('description', 'unknown')}"
     except Exception as e:
         return f"❌ Send failed: {str(e)}"
+
+
+@mcp.tool()
+def send_wechat(text: str) -> str:
+    """Send a WeChat message via iLink Bot. Requires the WeChat channel to be running
+    and a valid context_token (the user must have sent a message recently)."""
+    import json as _j
+    import urllib.request
+
+    # Read bot account info
+    accounts_dir = Path.home() / ".wechat-claude" / "accounts"
+    account_files = list(accounts_dir.glob("*.json")) if accounts_dir.exists() else []
+    if not account_files:
+        return "❌ No WeChat bot account found. Start the WeChat channel and scan QR first."
+
+    with open(account_files[0]) as f:
+        account = _j.load(f)
+    base_url = account.get("baseUrl", "https://ilinkai.weixin.qq.com")
+    bot_token = account.get("token", "")
+
+    # Read context_token
+    token_file = Path.home() / ".wechat-claude" / "context-tokens.json"
+    if not token_file.exists():
+        return "❌ No context_token. The user needs to send a WeChat message first."
+
+    with open(token_file) as f:
+        tokens = _j.load(f)
+
+    if not tokens:
+        return "❌ context_token is empty. The user needs to send a WeChat message first."
+
+    # Use the first user's token
+    user_id = list(tokens.keys())[0]
+    context_token = tokens[user_id]["token"]
+
+    # Build request
+    import uuid
+    import base64
+    body = _j.dumps({
+        "msg": {
+            "from_user_id": "",
+            "to_user_id": user_id,
+            "client_id": f"wechat-claude-{uuid.uuid4().hex[:8]}",
+            "message_type": 2,
+            "message_state": 2,
+            "item_list": [{"type": 1, "text_item": {"text": text}}],
+            "context_token": context_token,
+        },
+        "base_info": {"channel_version": "1.0.0"},
+    }).encode()
+
+    uin = base64.b64encode(uuid.uuid4().bytes).decode()
+    url = f"{base_url}/ilink/bot/sendmessage"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("AuthorizationType", "ilink_bot_token")
+    req.add_header("Authorization", f"Bearer {bot_token}")
+    req.add_header("X-WECHAT-UIN", uin)
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = _j.loads(resp.read())
+            err_code = result.get("errcode", result.get("err_code", 0))
+            if err_code == 0:
+                mem.bus_post("wechat", "out", text)
+                return "✅ WeChat message sent"
+            return f"❌ iLink API error: {_j.dumps(result, ensure_ascii=False)}"
+    except Exception as e:
+        return f"❌ Send failed: {str(e)}"
+
+
+@mcp.tool()
+def read_wechat(limit: int = 10) -> str:
+    """Read recent WeChat inbox messages. Returns the last N messages received from the user.
+    limit: number of messages to return, default 10, max 50."""
+    import json as _j
+
+    inbox_file = Path.home() / ".wechat-claude" / "inbox.json"
+    if not inbox_file.exists():
+        return "📭 Inbox empty (WeChat channel not running or no messages received yet)"
+
+    try:
+        with open(inbox_file) as f:
+            inbox = _j.load(f)
+    except Exception:
+        return "❌ Failed to read inbox"
+
+    if not inbox:
+        return "📭 Inbox empty"
+
+    limit = min(max(1, limit), 50)
+    recent = inbox[-limit:]
+
+    lines = []
+    for msg in recent:
+        ts = msg.get("ts", "?")[:19].replace("T", " ")
+        text = msg.get("text", "")
+        lines.append(f"[{ts}] {text}")
+
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -472,6 +582,10 @@ if __name__ == "__main__":
                 if request.url.path in ("/oauth/token", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/oauth/authorize"):
                     return await call_next(request)
                 if not ACCESS_TOKEN:
+                    return await call_next(request)
+                # Localhost requests bypass auth (internal service calls)
+                client = request.client
+                if client and client.host in ("127.0.0.1", "::1", "localhost"):
                     return await call_next(request)
                 auth = request.headers.get("authorization", "")
                 if auth == f"Bearer {ACCESS_TOKEN}":

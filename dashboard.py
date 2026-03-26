@@ -265,7 +265,7 @@ async def api_start(component: str):
             result = subprocess.run(
                 [
                     "osascript", "-e",
-                    f'tell application "Terminal" to do script "{cmd}"'
+                    f'tell application "Terminal" to do script "cd {BASE} && {cmd}"'
                 ],
                 capture_output=True,
                 text=True,
