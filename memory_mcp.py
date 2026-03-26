@@ -153,7 +153,10 @@ def send_telegram_photo(file_path: str, caption: str = "", chat_id: str = "") ->
 @mcp.tool()
 def system_status() -> str:
     """Check system health: CPU, memory, disk, and service status."""
-    import psutil
+    try:
+        import psutil
+    except ImportError:
+        return "❌ psutil not installed. Run: pip install psutil"
 
     cpu = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory()

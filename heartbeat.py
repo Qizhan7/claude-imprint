@@ -19,7 +19,18 @@ PROJECT_DIR = Path(__file__).parent
 GLOBAL_CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
 SOUL_FILE = PROJECT_DIR / "SOUL.md"
 HEARTBEAT_FILE = PROJECT_DIR / "HEARTBEAT.md"
-CLAUDE_BIN = os.path.expanduser("~/.local/bin/claude")
+import shutil
+CLAUDE_BIN = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
+
+
+def _get_telegram_plugin_dir() -> Path:
+    """Find the latest installed Telegram plugin version."""
+    base = Path.home() / ".claude/plugins/cache/claude-plugins-official/telegram"
+    if base.exists():
+        versions = sorted(base.iterdir(), reverse=True)
+        if versions:
+            return versions[0]
+    return base / "0.0.1"  # fallback
 
 # Heartbeat interval in seconds. Default 15 minutes.
 HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", 900))
@@ -111,7 +122,7 @@ async def run_heartbeat():
         "telegram": {
             "command": "bun",
             "args": ["run", "--cwd",
-                     str(Path.home() / ".claude/plugins/cache/claude-plugins-official/telegram/0.0.1"),
+                     str(_get_telegram_plugin_dir()),
                      "--shell=bun", "--silent", "start"]
         },
         "imprint-memory": {

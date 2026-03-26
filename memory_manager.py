@@ -503,7 +503,8 @@ def _execute_task(task_id: int, prompt: str):
     db.commit()
     db.close()
 
-    claude_bin = _os.path.expanduser("~/.local/bin/claude")
+    import shutil as _shutil
+    claude_bin = _shutil.which("claude") or _os.path.expanduser("~/.local/bin/claude")
     env = {**_os.environ}
     env.pop("CLAUDECODE", None)
     env["PATH"] = _os.path.expanduser("~/.local/bin") + ":" + _os.path.expanduser("~/.bun/bin") + ":" + env.get("PATH", "")
