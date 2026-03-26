@@ -305,12 +305,22 @@ Tasks persist in `~/.claude/scheduled-tasks/` and survive restarts.
 
 ### Module E: Dashboard
 
-**What you get:** Web UI to manage everything — start/stop services, browse memories, view scheduled tasks, interaction heatmap.
+**What you get:** A single-page control panel for your entire system.
+
+- **Service Manager** — Start/stop all services (Memory HTTP, Cloudflare Tunnel, Telegram, WeChat) with toggle switches. Background services show logs inline.
+- **Status Bar** — Tunnel URL, total memory count, today's log count at a glance.
+- **Interaction Heatmap** — GitHub-style 365-day activity chart. Darker = more interactions that day.
+- **Scheduled Tasks** — View all recurring tasks (morning briefing, reminders, nightly consolidation).
+- **Remote Tool Log** — See what Claude.ai chat has been doing: task submissions, results, Telegram messages sent.
+- **Memory Browser** — Search, edit, and delete memories directly. Changes sync to the database in real-time (including vector embeddings and full-text index).
+- **Language Toggle** — Switch between English and Chinese (🌐 button, top right). Preference is saved in localStorage.
 
 ```bash
 python3 dashboard.py
 # → http://localhost:3000
 ```
+
+<!-- ![Dashboard Screenshot](docs/dashboard.png) -->
 
 ---
 

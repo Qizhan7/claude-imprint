@@ -19,7 +19,13 @@ echo ""
 
 mkdir -p logs data
 
-nohup caffeinate -i python3 -u agent.py >> logs/agent.log 2>&1 &
+if command -v caffeinate &>/dev/null; then
+    echo "   Sleep prevention: caffeinate enabled"
+    nohup caffeinate -i python3 -u agent.py >> logs/agent.log 2>&1 &
+else
+    echo "   Sleep prevention: caffeinate not found, starting without it"
+    nohup python3 -u agent.py >> logs/agent.log 2>&1 &
+fi
 echo $! > .pid-heartbeat
 
 echo "Agent started (PID: $(cat .pid-heartbeat))"

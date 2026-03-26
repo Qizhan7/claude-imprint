@@ -30,6 +30,7 @@ MEMORY_INDEX = PROJECT_DIR / "MEMORY.md"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 EMBED_DIM = 1024  # bge-m3 output dimension
+BANK_INDEX_VERSION = 2
 
 # Hybrid search weights
 WEIGHT_VECTOR = 0.4   # Semantic similarity
@@ -109,6 +110,17 @@ def _init_tables(db: sqlite3.Connection):
             created_at TEXT NOT NULL
         );
     """)
+
+    bank_chunk_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in db.execute("PRAGMA table_info(bank_chunks)").fetchall()
+    }
+    if "index_version" not in bank_chunk_cols:
+        try:
+            db.execute("ALTER TABLE bank_chunks ADD COLUMN index_version INTEGER DEFAULT 1")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
 
     # FTS5 full-text index
     try:
@@ -256,6 +268,53 @@ def forget(keyword: str) -> str:
     db.close()
     _rebuild_index()
     return f"Deleted {len(rows)} memories containing '{keyword}'"
+
+
+def delete_memory(memory_id: int) -> dict:
+    """Delete a single memory by ID and keep derived indexes in sync."""
+    db = _get_db()
+    row = db.execute("SELECT id FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    if not row:
+        db.close()
+        return {"ok": False, "error": f"Memory {memory_id} not found"}
+
+    db.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+    db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+    db.commit()
+    db.close()
+    _rebuild_index()
+    return {"ok": True}
+
+
+def update_memory(memory_id: int, content: str, category: str, importance: int = 5) -> dict:
+    """Update a single memory by ID and keep vectors/indexes in sync."""
+    content = content.strip()
+    if not content:
+        return {"ok": False, "error": "Content cannot be empty"}
+
+    db = _get_db()
+    row = db.execute("SELECT id FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    if not row:
+        db.close()
+        return {"ok": False, "error": f"Memory {memory_id} not found"}
+
+    db.execute(
+        "UPDATE memories SET content = ?, category = ?, importance = ?, updated_at = ? WHERE id = ?",
+        (content, category, importance, _now_str(), memory_id),
+    )
+    db.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+
+    vec = _embed(content)
+    if vec:
+        db.execute(
+            "INSERT INTO memory_vectors (memory_id, embedding, model) VALUES (?, ?, ?)",
+            (memory_id, _vec_to_blob(vec), EMBED_MODEL),
+        )
+
+    db.commit()
+    db.close()
+    _rebuild_index()
+    return {"ok": True, "embedding_refreshed": bool(vec)}
 
 
 def search(query: str, limit: int = 10, category: Optional[str] = None) -> list[dict]:
@@ -607,6 +666,32 @@ def bus_format(limit: int = 20) -> str:
 
 # ─── Bank File Index ─────────────────────────────────────
 
+def _clean_bank_chunk(chunk: str) -> Optional[str]:
+    """Remove template comments from a bank chunk and keep only substantive content."""
+    cleaned_lines = []
+    substantive_lines = []
+    in_comment = False
+
+    for line in chunk.split("\n"):
+        stripped = line.strip()
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+
+        cleaned_lines.append(line.rstrip())
+        if stripped and not stripped.startswith("#"):
+            substantive_lines.append(stripped)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+    if not cleaned or not substantive_lines:
+        return None
+    return cleaned
+
 def _index_bank_files():
     """Index markdown files in bank/ directory. Skip unchanged files."""
     if not BANK_DIR.exists():
@@ -615,10 +700,14 @@ def _index_bank_files():
     for md_file in BANK_DIR.glob("*.md"):
         mtime = md_file.stat().st_mtime
         existing = db.execute(
-            "SELECT file_mtime FROM bank_chunks WHERE file_path = ? LIMIT 1",
+            "SELECT file_mtime, index_version FROM bank_chunks WHERE file_path = ? LIMIT 1",
             (str(md_file),),
         ).fetchone()
-        if existing and abs(existing["file_mtime"] - mtime) < 1:
+        if (
+            existing
+            and abs(existing["file_mtime"] - mtime) < 1
+            and existing["index_version"] == BANK_INDEX_VERSION
+        ):
             continue
 
         db.execute("DELETE FROM bank_chunks WHERE file_path = ?", (str(md_file),))
@@ -627,19 +716,16 @@ def _index_bank_files():
         chunks = _split_into_chunks(text)
 
         for chunk in chunks:
-            chunk = chunk.strip()
-            if len(chunk) < 10:
+            cleaned_chunk = _clean_bank_chunk(chunk)
+            if not cleaned_chunk or len(cleaned_chunk) < 10:
                 continue
-            # Skip chunks that are purely template comments (HTML comments, examples)
-            lines = [l for l in chunk.split("\n") if l.strip()]
-            non_template = [l for l in lines if not l.strip().startswith("<!--") and not l.strip().endswith("-->") and not l.strip().startswith("# ")]
-            if not non_template:
-                continue
-            vec = _embed(chunk)
+            vec = _embed(cleaned_chunk)
             blob = _vec_to_blob(vec) if vec else None
             db.execute(
-                "INSERT INTO bank_chunks (file_path, chunk_text, embedding, file_mtime) VALUES (?, ?, ?, ?)",
-                (str(md_file), chunk, blob, mtime),
+                """INSERT INTO bank_chunks
+                   (file_path, chunk_text, embedding, file_mtime, index_version)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (str(md_file), cleaned_chunk, blob, mtime, BANK_INDEX_VERSION),
             )
     db.commit()
     db.close()

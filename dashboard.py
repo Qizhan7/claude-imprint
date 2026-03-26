@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import psutil
 import uvicorn
+import memory_manager as mem
 
 app = FastAPI(title="Claude Imprint")
 BASE = Path(__file__).parent
@@ -260,10 +261,34 @@ async def api_start(component: str):
                 {"ok": False, "error": f"osascript not available (macOS only). Run manually: {cmd}"},
                 status_code=501,
             )
-        subprocess.run([
-            "osascript", "-e",
-            f'tell application "Terminal" to do script "{cmd}"'
-        ], capture_output=True)
+        try:
+            result = subprocess.run(
+                [
+                    "osascript", "-e",
+                    f'tell application "Terminal" to do script "{cmd}"'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            return JSONResponse(
+                {"ok": False, "error": f"Timed out opening Terminal. Run manually: {cmd}"},
+                status_code=504,
+            )
+        except Exception as e:
+            return JSONResponse(
+                {"ok": False, "error": f"Failed to launch Terminal: {e}. Run manually: {cmd}"},
+                status_code=500,
+            )
+
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            detail = f" AppleScript error: {err}" if err else ""
+            return JSONResponse(
+                {"ok": False, "error": f"Failed to open Terminal.{detail} Run manually: {cmd}"},
+                status_code=500,
+            )
         return {"ok": True}
 
 
@@ -325,69 +350,24 @@ async def api_memories(q: str = "", limit: int = 20):
 @app.delete("/api/memories/{memory_id}")
 async def api_delete_memory(memory_id: int):
     """Delete a memory"""
-    db_path = BASE / "memory.db"
-    if not db_path.exists():
-        return {"ok": False, "error": "Database not found"}
-    import sqlite3
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
-    conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
-    conn.commit()
-    conn.close()
-    try:
-        from memory_manager import _rebuild_index
-        _rebuild_index()
-    except Exception:
-        pass  # non-critical: MEMORY.md will be rebuilt on next memory write
-    return {"ok": True}
+    result = mem.delete_memory(memory_id)
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=404 if "not found" in result.get("error", "").lower() else 400)
+    return result
 
 
 @app.put("/api/memories/{memory_id}")
 async def api_update_memory(memory_id: int, request: Request):
     """Update a memory"""
-    db_path = BASE / "memory.db"
-    if not db_path.exists():
-        return {"ok": False, "error": "Database not found"}
-    import sqlite3
     body = await request.json()
     content = body.get("content", "")
     category = body.get("category", "")
     importance = body.get("importance", 5)
-    if not content:
-        return {"ok": False, "error": "Content cannot be empty"}
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "UPDATE memories SET content = ?, category = ?, importance = ? WHERE id = ?",
-        (content, category, importance, memory_id),
-    )
-    # Delete old vector embedding (content changed, old embedding is stale)
-    conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
-    conn.commit()
-
-    # Regenerate embedding for updated content
-    try:
-        from memory_manager import _embed, _vec_to_blob, EMBED_MODEL
-        vec = _embed(content)
-        if vec:
-            conn.execute(
-                "INSERT INTO memory_vectors (memory_id, embedding, model) VALUES (?, ?, ?)",
-                (memory_id, _vec_to_blob(vec), EMBED_MODEL),
-            )
-            conn.commit()
-        else:
-            import logging
-            logging.warning(f"Could not regenerate embedding for memory {memory_id}: Ollama may not be running")
-    except Exception as e:
-        import logging
-        logging.warning(f"Failed to regenerate embedding for memory {memory_id}: {e}")
-
-    conn.close()
-    try:
-        from memory_manager import _rebuild_index
-        _rebuild_index()
-    except Exception:
-        pass  # non-critical: MEMORY.md will be rebuilt on next memory write
-    return {"ok": True}
+    result = mem.update_memory(memory_id, content=content, category=category, importance=importance)
+    if not result.get("ok"):
+        status_code = 404 if "not found" in result.get("error", "").lower() else 400
+        return JSONResponse(result, status_code=status_code)
+    return result
 
 
 @app.get("/api/remote-tools")
@@ -447,6 +427,7 @@ async def dashboard():
   .header {
     text-align: center;
     padding: 30px 0 20px;
+    position: relative;
   }
   .header h1 {
     font-size: 28px;
@@ -654,19 +635,16 @@ async def dashboard():
   .lang-btn {
     position: absolute;
     right: 20px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: rgba(255,255,255,0.15);
-    border: 1px solid rgba(255,255,255,0.3);
-    color: #FFFFFF;
-    padding: 4px 12px;
-    border-radius: 6px;
-    font-size: 12px;
+    top: 16px;
+    background: none;
+    border: none;
+    color: #3D3D3A;
+    font-size: 15px;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: opacity 0.2s;
+    opacity: 0.6;
   }
-  .lang-btn:hover { background: rgba(255,255,255,0.25); }
-  .header { position: relative; }
+  .lang-btn:hover { opacity: 1; }
   .tasks-section {
     max-width: 900px;
     margin: 20px auto;
@@ -911,6 +889,7 @@ const i18n = {
     editMemory: '✏️ Edit Memory',
     importance: 'Importance 1-10',
     confirmDelete: 'Delete this memory?',
+    actionFailed: 'Action failed',
     noData: 'No data',
     days: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
     months: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
@@ -938,6 +917,7 @@ const i18n = {
     editMemory: '✏️ 编辑记忆',
     importance: '重要性 1-10',
     confirmDelete: '确定删除这条记忆？',
+    actionFailed: '操作失败',
     noData: '暂无数据',
     days: ['日','一','二','三','四','五','六'],
     months: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
@@ -1012,7 +992,7 @@ function renderComponents(components) {
             <span class="card-name">${comp.name}</span>
           </span>
           <label class="toggle">
-            <input type="checkbox" ${checked} onchange="toggleComponent('${key}', this.checked)">
+            <input type="checkbox" ${checked} onchange="toggleComponent('${key}', this)">
             <span class="slider"></span>
           </label>
         </div>
@@ -1042,10 +1022,27 @@ function renderTasks(tasks) {
   `).join('');
 }
 
-async function toggleComponent(key, on) {
+async function toggleComponent(key, toggle) {
+  const on = toggle.checked;
   const action = on ? 'start' : 'stop';
-  await fetch(`/api/${key}/${action}`, { method: 'POST' });
-  setTimeout(fetchStatus, 1500);
+  toggle.disabled = true;
+  try {
+    const r = await fetch(`/api/${key}/${action}`, { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.ok === false) {
+      toggle.checked = !on;
+      alert(data.error || t('actionFailed'));
+      await fetchStatus();
+      return;
+    }
+    setTimeout(fetchStatus, 1500);
+  } catch (e) {
+    toggle.checked = !on;
+    alert((e && e.message) ? e.message : t('actionFailed'));
+    await fetchStatus();
+  } finally {
+    toggle.disabled = false;
+  }
 }
 
 async function toggleLog(key) {
