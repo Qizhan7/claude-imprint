@@ -1,8 +1,8 @@
 # Claude Imprint
 
-### Turn Claude Code into your personal assistant that lives across all your devices.
+### One Claude. Unified memory. Every channel.
 
-A self-hosted system that extends Claude Code with persistent memory, multi-channel chat, cross-channel context sharing, and automation. Talk to Claude from Telegram, WeChat, or Claude.ai — it remembers everything, knows what happened across channels, sets reminders, writes code, and manages your day. All data stays on your machine.
+A self-hosted system that gives Claude persistent memory and connects it across Claude Code, Claude.ai, Telegram, and WeChat. Talk to it from your terminal, your browser, or your phone — it remembers everything, shares context across channels, writes code on your machine from anywhere, and manages your day. All data stays local.
 
 Built for **Claude Code Pro/Max subscribers** who want to unlock more from their subscription. Uses only official Claude Code features — no API costs, no third-party authorization. Think of it as a DIY [OpenClaw](https://github.com/openclaw/openclaw), fully local and fully yours.
 
