@@ -81,7 +81,7 @@ def send_telegram(text: str, chat_id: str = "") -> str:
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     data = urllib.parse.urlencode({
-        "chat_id": target, "text": text, "parse_mode": "Markdown",
+        "chat_id": target, "text": text,
     }).encode()
     try:
         req = urllib.request.Request(url, data=data)

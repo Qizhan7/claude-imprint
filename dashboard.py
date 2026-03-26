@@ -333,6 +333,46 @@ async def api_memories(q: str = "", limit: int = 20):
     return {"memories": [dict(r) for r in rows]}
 
 
+@app.delete("/api/memories/{memory_id}")
+async def api_delete_memory(memory_id: int):
+    """Delete a memory"""
+    db_path = BASE / "memory.db"
+    if not db_path.exists():
+        return {"ok": False, "error": "Database not found"}
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+    conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.put("/api/memories/{memory_id}")
+async def api_update_memory(memory_id: int, request: Request):
+    """Update a memory"""
+    db_path = BASE / "memory.db"
+    if not db_path.exists():
+        return {"ok": False, "error": "Database not found"}
+    import sqlite3
+    body = await request.json()
+    content = body.get("content", "")
+    category = body.get("category", "")
+    importance = body.get("importance", 5)
+    if not content:
+        return {"ok": False, "error": "Content cannot be empty"}
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE memories SET content = ?, category = ?, importance = ? WHERE id = ?",
+        (content, category, importance, memory_id),
+    )
+    # Delete old vector embedding (content changed, old embedding is stale)
+    conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/remote-tools")
 async def api_remote_tools():
     """Get remote tool call log (cc_tasks etc.)"""
@@ -502,13 +542,87 @@ async def dashboard():
   }
   .search-box:focus { outline: none; border-color: #B96748; }
   .memory-item {
-    padding: 8px 0;
+    padding: 10px 0;
     border-bottom: 1px solid #E8E6DC;
     font-size: 13px;
     color: #3D3D3A;
+    position: relative;
   }
   .memory-item:last-child { border-bottom: none; }
+  .memory-item:hover .memory-actions { opacity: 1; }
   .memory-meta { color: #B0AEA5; font-size: 11px; margin-top: 2px; }
+  .memory-actions {
+    opacity: 0;
+    transition: opacity 0.15s;
+    position: absolute;
+    right: 0;
+    top: 8px;
+    display: flex;
+    gap: 4px;
+  }
+  .memory-actions button {
+    background: none;
+    border: 1px solid #E8E6DC;
+    color: #B0AEA5;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .memory-actions button:hover { border-color: #B96748; color: #B96748; }
+  .memory-actions button.del:hover { border-color: #c0392b; color: #c0392b; }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: #FFFFFF;
+    border-radius: 12px;
+    padding: 24px;
+    width: 500px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  }
+  .modal h3 { color: #B96748; margin-bottom: 16px; font-size: 16px; }
+  .modal textarea {
+    width: 100%;
+    min-height: 100px;
+    padding: 8px 12px;
+    border: 1px solid #E8E6DC;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #3D3D3A;
+    resize: vertical;
+    font-family: inherit;
+  }
+  .modal textarea:focus { outline: none; border-color: #B96748; }
+  .modal-row { display: flex; gap: 12px; margin-top: 12px; }
+  .modal-row select, .modal-row input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #E8E6DC;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #3D3D3A;
+  }
+  .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .modal-buttons button {
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    border: 1px solid #E8E6DC;
+    background: #FFFFFF;
+    color: #3D3D3A;
+  }
+  .modal-buttons button.save { background: #B96748; color: #FFFFFF; border-color: #B96748; }
+  .modal-buttons button.save:hover { background: #a05538; }
   .log-btn {
     background: none;
     border: 1px solid #E8E6DC;
@@ -707,13 +821,35 @@ async def dashboard():
 <div class="tasks-section">
   <h2>🔧 Remote Tool Log</h2>
   <div class="heatmap-subtitle">Tool calls from Claude.ai chat</div>
-  <div id="remote-tools" style="margin-top:12px;">Loading...</div>
+  <div id="remote-tools" style="margin-top:12px;max-height:400px;overflow-y:scroll;">Loading...</div>
 </div>
 
 <div class="memory-section">
   <h2>🧠 Memory</h2>
   <input class="search-box" type="text" placeholder="Search memories..." id="memory-search" oninput="searchMemories()">
-  <div id="memory-list"></div>
+  <div id="memory-list" style="max-height:500px;overflow-y:auto;"></div>
+</div>
+
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <h3>✏️ Edit Memory</h3>
+    <input type="hidden" id="edit-id">
+    <textarea id="edit-content"></textarea>
+    <div class="modal-row">
+      <select id="edit-category">
+        <option value="facts">facts</option>
+        <option value="events">events</option>
+        <option value="tasks">tasks</option>
+        <option value="experience">experience</option>
+        <option value="general">general</option>
+      </select>
+      <input type="number" id="edit-importance" min="1" max="10" placeholder="Importance 1-10">
+    </div>
+    <div class="modal-buttons">
+      <button onclick="closeEditModal()">Cancel</button>
+      <button class="save" onclick="saveMemory()">Save</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -803,7 +939,9 @@ async function searchMemories() {
   renderMemories(data.memories);
 }
 
+let allMemories = [];
 function renderMemories(memories) {
+  allMemories = memories;
   const list = document.getElementById('memory-list');
   if (!memories.length) {
     list.innerHTML = '<div style="color:#666;padding:20px;text-align:center">No memories yet</div>';
@@ -811,10 +949,50 @@ function renderMemories(memories) {
   }
   list.innerHTML = memories.map(m => `
     <div class="memory-item">
-      ${m.content}
+      <div style="padding-right:80px;">${m.content.replace(/</g,'&lt;')}</div>
       <div class="memory-meta">[${m.category}|${m.source}] ${m.created_at} · importance ${m.importance}</div>
+      <div class="memory-actions">
+        <button onclick="openEditModal(${m.id})">Edit</button>
+        <button class="del" onclick="deleteMemory(${m.id})">Delete</button>
+      </div>
     </div>
   `).join('');
+}
+
+async function deleteMemory(id) {
+  if (!confirm('Delete this memory?')) return;
+  await fetch('/api/memories/' + id, {method: 'DELETE'});
+  searchMemories();
+}
+
+function openEditModal(id) {
+  const m = allMemories.find(x => x.id === id);
+  if (!m) return;
+  document.getElementById('edit-id').value = m.id;
+  document.getElementById('edit-content').value = m.content;
+  document.getElementById('edit-category').value = m.category;
+  document.getElementById('edit-importance').value = m.importance;
+  document.getElementById('edit-modal').classList.add('active');
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.remove('active');
+}
+
+async function saveMemory() {
+  const id = document.getElementById('edit-id').value;
+  const body = {
+    content: document.getElementById('edit-content').value,
+    category: document.getElementById('edit-category').value,
+    importance: parseInt(document.getElementById('edit-importance').value) || 5,
+  };
+  await fetch('/api/memories/' + id, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  closeEditModal();
+  searchMemories();
 }
 
 async function fetchHeatmap() {
@@ -938,7 +1116,7 @@ async function fetchRemoteTools() {
       html += '<span style="color:#B0AEA5;font-size:11px;">' + (t.created_at||'') + '</span>';
       html += '</div>';
       if (result) {
-        html += '<div style="margin-top:6px;color:#6B6962;font-size:12px;white-space:pre-wrap;max-height:80px;overflow:hidden;">' + result.replace(/</g,'&lt;') + '</div>';
+        html += '<div style="margin-top:6px;color:#6B6962;font-size:12px;white-space:pre-wrap;max-height:120px;overflow-y:auto;">' + result.replace(/</g,'&lt;') + '</div>';
       }
       html += '</div>';
     });
