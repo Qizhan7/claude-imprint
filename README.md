@@ -320,7 +320,7 @@ python3 dashboard.py
 # → http://localhost:3000
 ```
 
-<!-- ![Dashboard Screenshot](docs/dashboard.png) -->
+![Dashboard Screenshot](docs/dashboard.png)
 
 ---
 
