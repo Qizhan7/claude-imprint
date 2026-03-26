@@ -333,6 +333,25 @@ async def api_memories(q: str = "", limit: int = 20):
     return {"memories": [dict(r) for r in rows]}
 
 
+@app.get("/api/remote-tools")
+async def api_remote_tools():
+    """Get remote tool call log (cc_tasks etc.)"""
+    db_path = BASE / "memory.db"
+    if not db_path.exists():
+        return {"tasks": []}
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, prompt, status, result, source, created_at, completed_at FROM cc_tasks ORDER BY id DESC LIMIT 20"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []  # table doesn't exist yet
+    conn.close()
+    return {"tasks": [dict(r) for r in rows]}
+
+
 @app.get("/api/logs/{component}")
 async def api_logs(component: str, lines: int = 30):
     """Get recent logs"""
@@ -685,6 +704,12 @@ async def dashboard():
   <div id="tasks-list">Loading...</div>
 </div>
 
+<div class="tasks-section">
+  <h2>🔧 Remote Tool Log</h2>
+  <div class="heatmap-subtitle">Tool calls from Claude.ai chat</div>
+  <div id="remote-tools" style="margin-top:12px;">Loading...</div>
+</div>
+
 <div class="memory-section">
   <h2>🧠 Memory</h2>
   <input class="search-box" type="text" placeholder="Search memories..." id="memory-search" oninput="searchMemories()">
@@ -892,11 +917,43 @@ function renderHeatmap(days) {
   container.innerHTML = html;
 }
 
+async function fetchRemoteTools() {
+  try {
+    const r = await fetch('/api/remote-tools');
+    const data = await r.json();
+    const el = document.getElementById('remote-tools');
+    if (!data.tasks || !data.tasks.length) {
+      el.innerHTML = '<div style="color:#B0AEA5">No remote calls yet</div>';
+      return;
+    }
+    const icons = {pending:'⏳',running:'🔄',completed:'✅',error:'❌',timeout:'⏰'};
+    let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+    data.tasks.forEach(t => {
+      const icon = icons[t.status] || '❓';
+      const prompt = t.prompt.length > 60 ? t.prompt.substring(0,60)+'...' : t.prompt;
+      const result = t.result ? (t.result.length > 120 ? t.result.substring(0,120)+'...' : t.result) : '';
+      html += '<div style="background:#F5F4EF;padding:10px 14px;border-radius:8px;font-size:13px;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+      html += '<span>' + icon + ' <strong>#' + t.id + '</strong> ' + prompt + '</span>';
+      html += '<span style="color:#B0AEA5;font-size:11px;">' + (t.created_at||'') + '</span>';
+      html += '</div>';
+      if (result) {
+        html += '<div style="margin-top:6px;color:#6B6962;font-size:12px;white-space:pre-wrap;max-height:80px;overflow:hidden;">' + result.replace(/</g,'&lt;') + '</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  } catch(e) { console.error(e); }
+}
+
 // Init
 fetchStatus();
 fetchHeatmap();
 searchMemories();
+fetchRemoteTools();
 setInterval(fetchStatus, 3000);
+setInterval(fetchRemoteTools, 10000);
 </script>
 </body>
 </html>"""

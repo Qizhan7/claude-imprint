@@ -8,16 +8,30 @@ Built for **Claude Code Pro/Max subscribers** who want to unlock more from their
 
 ## Features
 
-- **Unified Memory Across Claude Code and Claude.ai** — The same SQLite memory backend serves both Claude Code (local MCP server) and Claude.ai chat (via Custom Connector + Cloudflare Tunnel). Memories saved in one are instantly available in the other. One brain, multiple interfaces.
-- **Custom Memory System (replaces CC's built-in memory)** — Claude Code's default memory is file-based and basic. This project replaces it with a full database-backed system: SQLite + FTS5 full-text search + Ollama bge-m3 vector embeddings. Hybrid retrieval (keyword + semantic + time decay scoring), categorized storage, daily logs, and MCP tools that let Claude autonomously decide when to remember and recall.
-- **Search Memories From Any Channel** — Ask Claude to recall something from Telegram, WeChat, or Claude.ai — it searches the same memory database. What you told Claude on your phone is available when you sit down at your computer.
-- **Multi-Channel (all optional)** — Pick the channels you need: Telegram, WeChat, Claude.ai, or any future platform (Discord, etc.). Each is independent — install one, two, or all. They all share the same memory and can talk to Claude Code.
-- **Chat-to-Code** — Tell Claude from any chat platform to write code, run scripts, or manage your projects. Your messaging app becomes a remote control for Claude Code.
-- **Reminders From Chat** — Send a message like "remind me to call the dentist tomorrow at 3pm" from any platform. Claude creates a persistent scheduled task and notifies you on time.
-- **Scheduled Tasks** — Persistent tasks (morning briefing, reminders, nightly memory consolidation) using Claude Code's built-in scheduler.
-- **Heartbeat Agent** — Periodic automated checks with proactive notifications.
-- **Dashboard** — Single-file FastAPI app (localhost:3000). Component status, start/stop controls, memory browser, and an interaction heatmap that shows how often you and Claude talk throughout the day.
-- **Pre-compaction Hook** — Automatically saves conversation context before Claude Code compresses the context window.
+### 🧠 Memory
+- **Custom Memory System (replaces CC's built-in)** — Claude Code's default memory is file-based and basic. This replaces it with SQLite + FTS5 full-text search + bge-m3 vector embeddings. Hybrid retrieval (keyword + semantic + time decay scoring), categorized storage, and daily logs.
+- **Unified Memory Across Claude Code and Claude.ai** — The same SQLite backend serves both Claude Code (local stdio MCP) and Claude.ai chat (HTTP MCP via Cloudflare Tunnel). One brain, multiple interfaces — memories saved in one are instantly searchable from the other.
+
+### 💬 Multi-Channel
+- **Chat From Anywhere** — Telegram, WeChat, Claude.ai, or any future platform. Each channel is independent and optional — install one or all. They all share the same memory.
+- **Cross-Channel Memory** — Ask Claude to recall something from Telegram while you're on Claude.ai. What you said on your phone is available at your computer.
+
+### 🎮 Remote Control (via Claude.ai Chat)
+- **Chat-to-Code** — Tell Claude.ai to write code, run scripts, fix bugs, or manage git repos on your computer. Claude.ai submits the task → local Claude Code executes it → results come back. Your phone becomes a remote terminal.
+- **Direct Telegram Messaging** — Claude.ai can send messages and files to your Telegram instantly via Bot API — no Claude Code middleman, millisecond delivery.
+- **System Monitor** — Check your computer's CPU, RAM, disk usage, and which services are running — all from Claude.ai chat.
+- **Webpage Reader** — Ask Claude.ai to fetch and read any URL for you. "Summarize this article" works even from your phone.
+- **Spotify Control** — Play, pause, skip, adjust volume on your Mac's Spotify — from Claude.ai chat (macOS only).
+- **Morning Briefing** — Weather + calendar + pending tasks, composed and sent to your Telegram in one message.
+
+### ⚡ Automation
+- **Scheduled Tasks** — Persistent tasks (morning briefing, reminders, nightly memory consolidation) using Claude Code's built-in scheduler. "Remind me to drink water at 3pm every day" — done.
+- **Heartbeat Agent** — Periodic automated checks with proactive Telegram notifications.
+- **Pre-compaction Hook** — Saves conversation context before Claude Code compresses the window, so nothing important gets lost.
+
+### 📊 Dashboard
+- **Control Panel** — Single-file FastAPI app (localhost:3000). Start/stop services, browse memories, view scheduled tasks, and a GitHub-style interaction heatmap showing your daily activity with Claude over the past year.
+- **Remote Tool Log** — See what Claude.ai has been doing on your machine: task submissions, Telegram messages sent, tool calls — all in one place.
 
 ## Architecture
 
