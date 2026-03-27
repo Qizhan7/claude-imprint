@@ -335,12 +335,12 @@ async def api_memories(q: str = "", limit: int = 20):
     conn.row_factory = sqlite3.Row
     if q:
         rows = conn.execute(
-            "SELECT id, content, category, source, importance, created_at FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
+            "SELECT id, content, category, source, tags, importance, created_at FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
             (f"%{q}%", limit)
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT id, content, category, source, importance, created_at FROM memories ORDER BY created_at DESC LIMIT ?",
+            "SELECT id, content, category, source, tags, importance, created_at FROM memories ORDER BY created_at DESC LIMIT ?",
             (limit,)
         ).fetchall()
     conn.close()
@@ -403,6 +403,575 @@ async def api_logs(component: str, lines: int = 30):
         return {"logs": "\n".join(all_lines[-lines:])}
     except Exception as e:
         return {"logs": f"Read error: {e}"}
+
+
+# ─── Tags API ────────────────────────────────────────────
+
+@app.get("/api/tags")
+async def api_tags():
+    """Get all unique tags from memories"""
+    db_path = BASE / "memory.db"
+    if not db_path.exists():
+        return {"tags": []}
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    rows = conn.execute("SELECT tags FROM memories WHERE tags IS NOT NULL AND tags != '[]'").fetchall()
+    conn.close()
+    tag_counts = {}
+    for (tags_json,) in rows:
+        try:
+            for tag in json.loads(tags_json):
+                tag = str(tag).strip()
+                if tag:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        except (json.JSONDecodeError, TypeError):
+            pass
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: -x[1])
+    return {"tags": [{"name": t, "count": c} for t, c in sorted_tags]}
+
+
+# ─── Mémoire Frontend ───────────────────────────────────
+
+@app.get("/memoire", response_class=HTMLResponse)
+async def memoire():
+    return MEMOIRE_HTML
+
+
+MEMOIRE_HTML = r"""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Mémoire</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #FAF9F6;
+    --bg-card: #FFFFFF;
+    --text: #2C2C2C;
+    --text-secondary: #999;
+    --text-muted: #BBB;
+    --accent: #C4956A;
+    --accent-light: #E8D5C4;
+    --border: #F0EDE8;
+    --tag-bg: #F5F2ED;
+    --tag-border: #E8E3DC;
+    --p1: #C4956A;
+    --p2: #D4A574;
+    --p3: #CCBBA8;
+    --p4: #BBB;
+    --shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    font-family: 'Noto Serif SC', 'Cormorant Garamond', Georgia, serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding-bottom: 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    padding: 48px 28px 20px;
+    text-align: left;
+  }
+  .header h1 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 28px;
+    font-weight: 300;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .header .count {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 300;
+    letter-spacing: 1px;
+  }
+
+  /* ─── Search ─── */
+  .search-area {
+    padding: 16px 28px 8px;
+  }
+  .search-input {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    font-family: inherit;
+    font-size: 14px;
+    padding: 12px 0;
+    color: var(--text);
+    outline: none;
+    letter-spacing: 1px;
+    transition: border-color 0.3s;
+  }
+  .search-input::placeholder {
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 2px;
+  }
+  .search-input:focus {
+    border-bottom-color: var(--accent);
+  }
+
+  /* ─── Tags ─── */
+  .tags-area {
+    padding: 20px 28px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tag-chip {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--tag-border);
+    background: var(--tag-bg);
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    letter-spacing: 0.5px;
+    user-select: none;
+  }
+  .tag-chip:active {
+    transform: scale(0.95);
+  }
+  .tag-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* ─── Fragments ─── */
+  .fragments {
+    padding: 24px 0 0;
+  }
+  .fragment {
+    padding: 24px 28px;
+    border-left: 3px solid transparent;
+    transition: border-color 0.2s;
+    position: relative;
+  }
+  .fragment::after {
+    content: '';
+    display: block;
+    margin: 0 28px;
+    padding-top: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .fragment:last-child::after {
+    border-bottom: none;
+  }
+  .fragment:hover, .fragment:active {
+    border-left-color: var(--accent);
+  }
+  .fragment-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .fragment-date {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 300;
+    letter-spacing: 1px;
+  }
+  .fragment-badges {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .fragment-priority {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+  .fragment-priority.p1 { color: var(--p1); }
+  .fragment-priority.p2 { color: var(--p2); }
+  .fragment-priority.p3 { color: var(--p3); }
+  .fragment-priority.p4 { color: var(--p4); }
+  .fragment-id {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 300;
+  }
+  .fragment-content {
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text);
+    font-weight: 300;
+  }
+  .fragment-tags {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .fragment-tag {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--tag-bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── Empty state ─── */
+  .empty {
+    text-align: center;
+    padding: 80px 28px;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 300;
+    letter-spacing: 1px;
+  }
+
+  /* ─── Bottom Nav ─── */
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 64px;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    z-index: 100;
+  }
+  .nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 8px 16px;
+    transition: color 0.2s;
+    text-decoration: none;
+  }
+  .nav-item.active {
+    color: var(--accent);
+  }
+  .nav-item svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.5;
+  }
+  .nav-label {
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* ─── Loading ─── */
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+    font-size: 13px;
+    letter-spacing: 1px;
+  }
+
+  /* ─── Scroll ─── */
+  ::-webkit-scrollbar { width: 0; }
+
+  /* ─── Detail Modal ─── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 200;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .modal-overlay.show { display: flex; align-items: flex-end; }
+  .modal {
+    width: 100%;
+    max-height: 80vh;
+    background: var(--bg);
+    border-radius: 16px 16px 0 0;
+    padding: 28px;
+    overflow-y: auto;
+    animation: slideUp 0.3s ease;
+  }
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+  .modal-handle {
+    width: 36px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 0 auto 20px;
+  }
+  .modal-date {
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .modal-badges {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .modal-badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: var(--tag-bg);
+    color: var(--text-secondary);
+  }
+  .modal-content {
+    font-size: 16px;
+    line-height: 1.8;
+    color: var(--text);
+    font-weight: 300;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .modal-tags {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Mémoire</h1>
+  <div class="count" id="count"></div>
+</div>
+
+<div class="search-area">
+  <input class="search-input" id="search" type="text" placeholder="Search" autocomplete="off">
+</div>
+
+<div class="tags-area" id="tags"></div>
+
+<div class="fragments" id="fragments">
+  <div class="loading">...</div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="modal" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <div class="modal-date" id="modal-date"></div>
+    <div class="modal-badges" id="modal-badges"></div>
+    <div class="modal-content" id="modal-content"></div>
+    <div class="modal-tags" id="modal-tags"></div>
+  </div>
+</div>
+
+<!-- Bottom Nav -->
+<div class="bottom-nav">
+  <a class="nav-item active" href="/memoire">
+    <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    <span class="nav-label">Mémoire</span>
+  </a>
+  <a class="nav-item" href="/">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    <span class="nav-label">Dashboard</span>
+  </a>
+</div>
+
+<script>
+let allMemories = [];
+let allTags = [];
+let activeTag = null;
+let searchTimer = null;
+
+// ─── Format date ───
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(' ', 'T'));
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// ─── Priority label ───
+function getPriority(importance) {
+  if (importance >= 8) return { label: 'P1', cls: 'p1' };
+  if (importance >= 6) return { label: 'P2', cls: 'p2' };
+  if (importance >= 4) return { label: 'P3', cls: 'p3' };
+  return { label: 'P4', cls: 'p4' };
+}
+
+// ─── Parse tags ───
+function parseTags(tagsField) {
+  if (!tagsField) return [];
+  try {
+    const parsed = JSON.parse(tagsField);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch { return []; }
+}
+
+// ─── Fetch all data ───
+async function init() {
+  const [memRes, tagRes] = await Promise.all([
+    fetch('/api/memories?limit=200'),
+    fetch('/api/tags')
+  ]);
+  const memData = await memRes.json();
+  const tagData = await tagRes.json();
+
+  allMemories = memData.memories || [];
+  allTags = tagData.tags || [];
+
+  document.getElementById('count').textContent = `${allMemories.length} fragments`;
+  renderTags();
+  renderFragments(allMemories);
+}
+
+// ─── Render tags ───
+function renderTags() {
+  const el = document.getElementById('tags');
+  // Show priority chips + top content tags
+  const priorityChips = ['P1', 'P2', 'P3', 'P4'];
+  let html = priorityChips.map(p =>
+    `<span class="tag-chip${activeTag === p ? ' active' : ''}" onclick="toggleTag('${p}')">${p}</span>`
+  ).join('');
+
+  // Add content tags (top 8)
+  const topTags = allTags.slice(0, 8);
+  html += topTags.map(t =>
+    `<span class="tag-chip${activeTag === t.name ? ' active' : ''}" onclick="toggleTag('${t.name}')">${t.name}</span>`
+  ).join('');
+
+  el.innerHTML = html;
+}
+
+// ─── Toggle tag filter ───
+function toggleTag(tag) {
+  activeTag = activeTag === tag ? null : tag;
+  renderTags();
+  applyFilters();
+}
+
+// ─── Apply filters ───
+function applyFilters() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  let filtered = allMemories;
+
+  // Tag / priority filter
+  if (activeTag) {
+    if (['P1','P2','P3','P4'].includes(activeTag)) {
+      filtered = filtered.filter(m => getPriority(m.importance).label === activeTag);
+    } else {
+      filtered = filtered.filter(m => {
+        const tags = parseTags(m.tags);
+        return tags.some(t => t === activeTag);
+      });
+    }
+  }
+
+  // Search filter
+  if (q) {
+    filtered = filtered.filter(m => m.content.toLowerCase().includes(q));
+  }
+
+  renderFragments(filtered);
+}
+
+// ─── Render fragments ───
+function renderFragments(memories) {
+  const el = document.getElementById('fragments');
+  if (!memories.length) {
+    el.innerHTML = '<div class="empty">No fragments found</div>';
+    return;
+  }
+
+  el.innerHTML = memories.map((m, i) => {
+    const p = getPriority(m.importance);
+    const tags = parseTags(m.tags);
+    const tagsHtml = tags.length
+      ? `<div class="fragment-tags">${tags.map(t => `<span class="fragment-tag">${t}</span>`).join('')}</div>`
+      : '';
+    return `
+      <div class="fragment" onclick="openDetail(${m.id})">
+        <div class="fragment-meta">
+          <span class="fragment-date">${formatDate(m.created_at)}</span>
+          <div class="fragment-badges">
+            <span class="fragment-priority ${p.cls}">${p.label}</span>
+            <span class="fragment-id">#${m.id}</span>
+          </div>
+        </div>
+        <div class="fragment-content">${escapeHtml(m.content)}</div>
+        ${tagsHtml}
+      </div>`;
+  }).join('');
+}
+
+// ─── Escape HTML ───
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ─── Detail modal ───
+function openDetail(id) {
+  const m = allMemories.find(x => x.id === id);
+  if (!m) return;
+
+  const p = getPriority(m.importance);
+  const tags = parseTags(m.tags);
+
+  document.getElementById('modal-date').textContent = formatDate(m.created_at);
+  document.getElementById('modal-badges').innerHTML = `
+    <span class="modal-badge">${p.label}</span>
+    <span class="modal-badge">${m.category || 'general'}</span>
+    <span class="modal-badge">${m.source || 'cc'}</span>
+    <span class="modal-badge">#${m.id}</span>
+  `;
+  document.getElementById('modal-content').textContent = m.content;
+  document.getElementById('modal-tags').innerHTML = tags.map(t =>
+    `<span class="fragment-tag">${t}</span>`
+  ).join('');
+
+  document.getElementById('modal').classList.add('show');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('modal')) {
+    document.getElementById('modal').classList.remove('show');
+    document.body.style.overflow = '';
+  }
+}
+
+// ─── Search handler ───
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(applyFilters, 200);
+});
+
+// ─── Init ───
+init();
+</script>
+</body>
+</html>"""
 
 
 # ─── Frontend ────────────────────────────────────────────
