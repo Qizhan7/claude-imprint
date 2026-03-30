@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "imprint-memory": {
+      "command": "python3",
+      "args": ["packages/imprint_memory/server.py"],
+      "cwd": "<YOUR_IMPRINT_DIR>"
+    }
+  }
+}
