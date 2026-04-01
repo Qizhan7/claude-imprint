@@ -152,6 +152,7 @@ def process_new_messages(transcript_path: str, session_id: str) -> int:
 
     count = 0
     new_offset = offset
+    last_user_platform = "cc"  # Track platform from last user message
 
     with open(transcript_path, "rb") as f:
         f.seek(offset)
@@ -188,6 +189,12 @@ def process_new_messages(transcript_path: str, session_id: str) -> int:
 
             platform = parse_platform(entry, content)
             direction = "in" if entry_type == "user" else "out"
+
+            # Assistant replies inherit platform from the preceding user message
+            if direction == "in":
+                last_user_platform = platform
+            elif platform == "cc" and last_user_platform != "cc":
+                platform = last_user_platform
 
             # Timestamp
             ts = entry.get("timestamp", "")
