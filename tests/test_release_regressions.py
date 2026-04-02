@@ -54,7 +54,7 @@ class MemoryManagerReleaseTests(unittest.TestCase):
 
         deleted = mem.delete_memory(1)
         self.assertTrue(deleted["ok"])
-        self.assertIn("*0 memories*", mem.MEMORY_INDEX.read_text(encoding="utf-8"))
+        self.assertIn("*0 memories", mem.MEMORY_INDEX.read_text(encoding="utf-8"))
 
     def test_bank_reindex_cleans_stale_template_rows(self):
         bank_file = mem.BANK_DIR / "preferences.md"

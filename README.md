@@ -155,7 +155,7 @@ brew install ollama && ollama pull bge-m3
 
 ### Module A: Chat Integration
 
-**What you get:** Claude.ai chat shares the same memory as Claude Code, plus `cc_execute` for remote code execution and `message_bus` for cross-channel context. The HTTP server exposes memory tools, conversation search, and the CC task queue. For `send_telegram`, `system_status`, `read_webpage`, `spotify_control`, and `morning_briefing`, set up the corresponding packages separately (Telegram, Utils) — they work alongside via the shared memory database.
+**What you get:** Claude.ai chat shares the same memory as Claude Code, plus `cc_execute` for remote code execution and `message_bus` for cross-channel context. The HTTP server exposes memory tools, conversation search, and the CC task queue. For `send_telegram`, `system_status`, `read_webpage`, and `spotify_control`, set up the corresponding packages separately (Telegram, Utils) — they work alongside via the shared memory database.
 
 **You need:** A domain (or free Cloudflare quick tunnel), Cloudflare account.
 
@@ -242,7 +242,6 @@ Add to Claude.ai **Custom Instructions** or **Project Instructions**:
 | `system_status` | imprint_utils | CPU, RAM, disk, service health |
 | `read_webpage` | imprint_utils | Fetch & extract text from a URL |
 | `spotify_control` | imprint_utils | Play/pause/skip/volume (macOS) |
-| `morning_briefing` | imprint_utils | Weather + calendar + tasks → Telegram |
 
 ---
 

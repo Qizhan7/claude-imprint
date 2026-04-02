@@ -137,7 +137,7 @@ def get_memory_stats():
         from datetime import datetime, timezone, timedelta
         tz = timezone(timedelta(hours=int(os.environ.get("TZ_OFFSET", 0))))
         today = datetime.now(tz).strftime("%Y-%m-%d")
-        log_file = BASE / "memory" / f"{today}.md"
+        log_file = DATA_DIR / "memory" / f"{today}.md"
         today_logs = 0
         if log_file.exists():
             today_logs = len([l for l in log_file.read_text().splitlines() if l.strip()])
@@ -195,7 +195,7 @@ def get_heatmap_data():
                 data[d] = data.get(d, 0) + c
 
     # Also count daily log lines
-    mem_dir = BASE / "memory"
+    mem_dir = DATA_DIR / "memory"
     if mem_dir.exists():
         for f in mem_dir.glob("????-??-??.md"):
             d = f.stem
