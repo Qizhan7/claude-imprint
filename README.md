@@ -301,6 +301,31 @@ Edit `SOUL.md` (personality) and `HEARTBEAT.md` (checklist) to customize behavio
 
 Tasks persist in `~/.claude/scheduled-tasks/` and survive restarts.
 
+#### Cron prompt templates
+
+The `cron-prompts/` directory contains prompt templates for recurring tasks. Each `.md` file is a self-contained instruction that gets fed to Claude Code via `cron-task.sh`:
+
+| Template | Suggested schedule | What it does |
+|---|---|---|
+| `morning-briefing.md` | Daily 7-8 AM | Search memory for tasks/events, compose greeting, send via Telegram |
+| `drink-water.md` | Every 2-3 hours | Send a friendly hydration reminder via Telegram |
+| `health-check.md` | Every 6 hours | Check system status, only notify if something is wrong |
+| `nightly-consolidation.md` | Daily 11 PM | Deduplicate memories, decay old ones, write daily summary |
+| `weekly-memory-audit.md` | Weekly (Sunday) | Cross-check experience/tasks memories against actual code changes |
+
+**How to use:**
+```bash
+# Run a cron prompt manually
+bash cron-task.sh cron-prompts/morning-briefing.md
+
+# Schedule with crontab
+crontab -e
+# 0 7 * * * cd /path/to/claude-imprint && bash cron-task.sh cron-prompts/morning-briefing.md
+# 0 23 * * * cd /path/to/claude-imprint && bash cron-task.sh cron-prompts/nightly-consolidation.md
+```
+
+**Customize:** These are starting templates. Edit the prompts to match your personality, language, and preferences. Add new `.md` files for your own recurring tasks.
+
 ---
 
 ### Module E: Dashboard
@@ -373,6 +398,13 @@ claude-imprint/
 │   ├── post-response.sh          # Post-response conversation logger
 │   ├── post_response_processor.py # Cross-channel message extraction
 │   └── pre-compact-flush.sh      # Pre-compaction memory saver
+├── cron-prompts/
+│   ├── morning-briefing.md       # Daily morning greeting + tasks
+│   ├── drink-water.md            # Hydration reminder
+│   ├── health-check.md           # System health monitor
+│   ├── nightly-consolidation.md  # End-of-day memory cleanup
+│   └── weekly-memory-audit.md    # Weekly memory vs. code verification
+├── cron-task.sh              # Cron task runner (wraps claude CLI)
 ├── chat_cleaner.py           # Import old Claude.ai conversations
 ├── memory/                   # Daily logs + bank files
 │   └── bank/                 # Structured knowledge files
