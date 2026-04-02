@@ -21,7 +21,7 @@ import os
 TZ_OFFSET = int(os.environ.get("TZ_OFFSET", 0))
 LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET))
 PROJECT_DIR = Path(__file__).parent
-DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(PROJECT_DIR)))
+DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(Path.home() / ".imprint")))
 DB_PATH = DATA_DIR / "memory.db"
 CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
 EXPERIENCE_FILE = DATA_DIR / "memory/bank/experience.md"

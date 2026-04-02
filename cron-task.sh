@@ -63,7 +63,7 @@ if [ -n "$SENT_MSG" ]; then
     DISPLAY="${SENT_MSG:0:200}"
 
     # Write to conversation_log DB (source of truth — Stop hook rebuilds recent_context from this)
-    DB_FILE="${IMPRINT_DATA_DIR:-$PROJECT_DIR}/memory.db"
+    DB_FILE="${IMPRINT_DATA_DIR:-$HOME/.imprint}/memory.db"
     DB_TS=$(date +"%Y-%m-%d %H:%M:%S")
     sqlite3 "$DB_FILE" "INSERT INTO conversation_log (platform, direction, speaker, content, session_id, entrypoint, created_at, summary) VALUES ('telegram', 'out', 'Agent', '${DISPLAY//\'/\'\'}', 'cron-${TASK_NAME}', 'cron', '${DB_TS}', '');" 2>> "$LOGFILE" || true
 

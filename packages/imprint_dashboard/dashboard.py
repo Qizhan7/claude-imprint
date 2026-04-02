@@ -20,7 +20,7 @@ from imprint_memory import memory_manager as mem
 
 app = FastAPI(title="Claude Imprint")
 BASE = Path(__file__).parent.parent.parent  # packages/imprint_dashboard -> project root
-DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(BASE)))
+DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(Path.home() / ".imprint")))
 LOGS = BASE / "logs"
 LOGS.mkdir(exist_ok=True)
 

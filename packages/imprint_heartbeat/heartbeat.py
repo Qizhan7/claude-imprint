@@ -21,7 +21,7 @@ LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET))
 
 PACKAGE_DIR = Path(__file__).parent
 PROJECT_DIR = PACKAGE_DIR.parent.parent  # packages/imprint_heartbeat -> project root
-DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(PROJECT_DIR)))
+DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(Path.home() / ".imprint")))
 
 GLOBAL_CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
 HEARTBEAT_FILE = PACKAGE_DIR / "HEARTBEAT.md"
