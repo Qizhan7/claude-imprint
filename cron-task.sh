@@ -22,6 +22,15 @@ MCP_CONFIG="$PROJECT_DIR/cron-mcp.json"
 # cron has a minimal PATH; set up everything we need
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
+# ─── Auth ───
+# Max Plan users: store your OAuth token in ~/.claude/cron-token
+# API key users: store your key in ~/.claude/cron-token and uncomment ANTHROPIC_API_KEY
+TOKEN_FILE="$HOME/.claude/cron-token"
+if [ -f "$TOKEN_FILE" ]; then
+    export CLAUDE_CODE_OAUTH_TOKEN=$(cat "$TOKEN_FILE")
+    # export ANTHROPIC_API_KEY=$(cat "$TOKEN_FILE")  # uncomment for API key auth
+fi
+
 mkdir -p "$LOG_DIR"
 LOGFILE="$LOG_DIR/cron-${TASK_NAME}.log"
 
