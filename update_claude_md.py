@@ -158,13 +158,18 @@ def build_auto_section():
                     last_inbound = line.strip()
                     break
             if last_inbound:
-                # 解析平台
-                if "wx/" in last_inbound:
-                    platform = "微信"
-                elif "tg/" in last_inbound:
-                    platform = "Telegram"
-                else:
-                    platform = "其他渠道"
+                # Map platform abbreviations to display names
+                PLATFORM_NAMES = {
+                    "wx": "WeChat",
+                    "tg": "Telegram",
+                    "dc": "Discord",
+                    "sl": "Slack",
+                }
+                platform = "unknown"
+                for abbr, name in PLATFORM_NAMES.items():
+                    if f"{abbr}/" in last_inbound:
+                        platform = name
+                        break
                 parts.append(f"### ⚡ 最近一次跨渠道互动")
                 parts.append(f"来自{platform}：{last_inbound}")
                 parts.append(f"↑ 如果你现在在另一个渠道，注意这条消息的上下文。用户可能刚从那边过来。")

@@ -71,15 +71,16 @@ if ($SentLine) {
     $SentMsg = ($SentLine -replace "^SENT_TG:\s*", "").Trim()
     $Display = if ($SentMsg.Length -gt 200) { $SentMsg.Substring(0, 200) } else { $SentMsg }
 
-    # Write to conversation_log DB
-    $DbFile = if ($env:IMPRINT_DATA_DIR) { Join-Path $env:IMPRINT_DATA_DIR "memory.db" } else { Join-Path $env:USERPROFILE ".imprint\memory.db" }
+    # Write to conversation_log DB via Python (parameterized queries, no SQL injection)
     $DbTS = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $EscapedDisplay = $Display -replace "'", "''"
-    $SqlCmd = "INSERT INTO conversation_log (platform, direction, speaker, content, session_id, entrypoint, created_at, summary) VALUES ('telegram', 'out', 'Agent', '$EscapedDisplay', 'cron-$TaskName', 'cron', '$DbTS', '');"
+    $LogScript = Join-Path $ProjectDir "scripts\log_conversation.py"
     try {
-        sqlite3 $DbFile $SqlCmd 2>> $LogFile
+        python3 $LogScript `
+            --platform telegram --direction out --speaker Agent `
+            --content $Display --session "cron-$TaskName" --entrypoint cron `
+            --created-at $DbTS 2>> $LogFile
     } catch {
-        Add-Content $LogFile "[$TS] WARN: sqlite3 insert failed"
+        Add-Content $LogFile "[$TS] WARN: log_conversation.py failed"
     }
 
     # Append to recent_context.md
