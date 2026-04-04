@@ -135,6 +135,22 @@ claude settings add-hook PreCompact "bash $(pwd)/hooks/pre-compact-flush.sh"
 claude settings add-hook Stop "bash $(pwd)/hooks/post-response.sh"
 ```
 
+### Adding other channels (Discord, Slack, etc.)
+
+The system auto-detects any Claude Code channel plugin. No code changes needed — just install the channel MCP and everything works:
+
+1. **Install the channel's MCP server** (e.g. a Discord MCP from the community)
+2. **Register it in `.mcp.json`** alongside imprint-memory
+3. **Start Claude Code** with both the channel and imprint-memory loaded
+
+What happens automatically:
+- **Memory** — `memory_remember`, `memory_search`, etc. work immediately
+- **Conversation logging** — The post-response hook detects the new channel by name and tags all messages with the correct platform (e.g. `discord`)
+- **Cross-channel context** — Messages appear in `recent_context.md` and the CLAUDE.md AUTO section, visible to all other channels
+- **Search** — Use `conversation_search(query)` for all platforms, or `search_channel(query, "discord")` for a specific one
+- **Dashboard** — Stream stats show the new platform automatically; unknown platforms get a neutral color tag
+- **RRF hybrid search** — Works across all platforms, no configuration needed
+
 ### Semantic search (optional)
 
 ```bash
