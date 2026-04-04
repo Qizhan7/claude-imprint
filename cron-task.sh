@@ -71,10 +71,12 @@ SENT_MSG=$(echo "$OUTPUT" | grep "^SENT_TG:" | head -1 | sed 's/^SENT_TG: *//')
 if [ -n "$SENT_MSG" ]; then
     DISPLAY="${SENT_MSG:0:200}"
 
-    # Write to conversation_log DB (source of truth — Stop hook rebuilds recent_context from this)
-    DB_FILE="${IMPRINT_DATA_DIR:-$HOME/.imprint}/memory.db"
+    # Write to conversation_log via Python (parameterized query + FTS5 CJK trigger)
     DB_TS=$(date +"%Y-%m-%d %H:%M:%S")
-    sqlite3 "$DB_FILE" "INSERT INTO conversation_log (platform, direction, speaker, content, session_id, entrypoint, created_at, summary) VALUES ('telegram', 'out', 'Agent', '${DISPLAY//\'/\'\'}', 'cron-${TASK_NAME}', 'cron', '${DB_TS}', '');" 2>> "$LOGFILE" || true
+    python3 "$PROJECT_DIR/scripts/log_conversation.py" \
+        --platform telegram --direction out --speaker Agent \
+        --content "$DISPLAY" --session "cron-${TASK_NAME}" --entrypoint cron \
+        --created-at "$DB_TS" 2>> "$LOGFILE" || true
 
     # Also append to recent_context.md directly (in case Stop hook hasn't run yet)
     echo "[$TS_SHORT tg/out] $DISPLAY" >> "$CONTEXT_FILE"

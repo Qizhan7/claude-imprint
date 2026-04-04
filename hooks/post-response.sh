@@ -25,14 +25,19 @@ python3 "$SCRIPT_DIR/hooks/post_response_processor.py" "$TRANSCRIPT" "$SESSION_I
 # Sync recent_context.md → CLAUDE.md AUTO section
 python3 "$SCRIPT_DIR/update_claude_md.py" 2>> "$LOG_DIR/post-response.log" || true
 
-# Check if recent_context.md needs trimming (>120 message lines)
+# Check if recent_context.md needs compression (>120 message lines)
 CONTEXT_FILE="$SCRIPT_DIR/recent_context.md"
 if [ -f "$CONTEXT_FILE" ]; then
     MSG_LINES=$(grep -c '^\[' "$CONTEXT_FILE" 2>/dev/null || echo 0)
     if [ "$MSG_LINES" -gt 120 ]; then
-        # Keep only the last 60 lines to prevent unbounded growth
-        TMPFILE=$(mktemp)
-        tail -60 "$CONTEXT_FILE" > "$TMPFILE" && mv "$TMPFILE" "$CONTEXT_FILE"
+        if [ -f "$SCRIPT_DIR/scripts/compress_context.py" ]; then
+            # Run compression in background to not block the hook
+            nohup python3 "$SCRIPT_DIR/scripts/compress_context.py" "$CONTEXT_FILE" >> "$LOG_DIR/compress.log" 2>&1 &
+        else
+            # Fallback: simple tail trimming
+            TMPFILE=$(mktemp)
+            tail -60 "$CONTEXT_FILE" > "$TMPFILE" && mv "$TMPFILE" "$CONTEXT_FILE"
+        fi
     fi
 fi
 

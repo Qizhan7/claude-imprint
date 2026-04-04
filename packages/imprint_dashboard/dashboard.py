@@ -373,6 +373,49 @@ async def api_update_memory(memory_id: int, request: Request):
     return result
 
 
+@app.get("/api/stream-stats")
+async def api_stream_stats():
+    """Stream (conversation_log) statistics."""
+    db_path = DATA_DIR / "memory.db"
+    if not db_path.exists():
+        return {"total": 0, "today": 0, "platforms": {}, "last_message": None}
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    tz = timezone(timedelta(hours=int(os.environ.get("TZ_OFFSET", 0))))
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM conversation_log").fetchone()[0]
+        today_count = conn.execute(
+            "SELECT COUNT(*) FROM conversation_log WHERE created_at >= ?", (today,)
+        ).fetchone()[0]
+        platform_rows = conn.execute(
+            "SELECT platform, COUNT(*) as c FROM conversation_log GROUP BY platform ORDER BY c DESC"
+        ).fetchall()
+        platforms = {r["platform"]: r["c"] for r in platform_rows}
+        last = conn.execute(
+            "SELECT platform, direction, content, created_at FROM conversation_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        last_msg = None
+        if last:
+            content = last["content"]
+            if len(content) > 80:
+                content = content[:80] + "..."
+            last_msg = {
+                "platform": last["platform"],
+                "direction": last["direction"],
+                "content": content,
+                "time": last["created_at"],
+            }
+    except Exception:
+        total, today_count, platforms, last_msg = 0, 0, {}, None
+    finally:
+        conn.close()
+    return {"total": total, "today": today_count, "platforms": platforms, "last_message": last_msg}
+
+
 @app.get("/api/remote-tools")
 async def api_remote_tools():
     """Get remote tool call log (cc_tasks etc.)"""
@@ -812,6 +855,12 @@ async def dashboard():
   </div>
 </div>
 
+<div class="memory-section" id="stream-section">
+  <h2>Stream</h2>
+  <div class="heatmap-subtitle">conversation_log — full message archive</div>
+  <div id="stream-stats" style="margin-top:12px;">Loading...</div>
+</div>
+
 <div class="heatmap-section">
   <h2>📊 Interaction Heatmap</h2>
   <div class="heatmap-subtitle">Darker = more activity that day</div>
@@ -961,6 +1010,7 @@ function refreshAll() {
   applyStaticI18n();
   fetchStatus();
   fetchHeatmap();
+  fetchStreamStats();
   searchMemories();
   fetchRemoteTools();
 }
@@ -1224,6 +1274,42 @@ function renderHeatmap(days) {
   container.innerHTML = html;
 }
 
+async function fetchStreamStats() {
+  try {
+    const r = await fetch('/api/stream-stats');
+    const data = await r.json();
+    const el = document.getElementById('stream-stats');
+    if (!el) return;
+
+    const platformTags = Object.entries(data.platforms || {}).map(([p, c]) => {
+      const colors = {cc:'#B96748', telegram:'#0088cc', wechat:'#07C160', heartbeat:'#B0AEA5', channel:'#6A3EA1'};
+      const color = colors[p] || '#6B6962';
+      return '<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;border:1px solid '+color+';color:'+color+';margin:2px 4px 2px 0;">'+p+' '+c+'</span>';
+    }).join('');
+
+    let lastLine = '';
+    if (data.last_message) {
+      const lm = data.last_message;
+      const arrow = lm.direction === 'in' ? '\u2190' : '\u2192';
+      lastLine = '<div style="margin-top:10px;padding:8px 12px;background:#F5F4EF;border-radius:8px;font-size:12px;color:#6B6962;">'
+        + '<span style="color:#B0AEA5;">Latest</span> '
+        + '<span style="color:#B96748;font-weight:600;">[' + lm.platform + ' ' + arrow + ']</span> '
+        + lm.content.replace(/</g,'&lt;')
+        + '<span style="float:right;color:#B0AEA5;">' + (lm.time||'') + '</span>'
+        + '</div>';
+    }
+
+    el.innerHTML = '<div style="display:flex;gap:20px;align-items:baseline;flex-wrap:wrap;">'
+      + '<span style="font-size:28px;font-weight:700;color:#B96748;">' + (data.total||0).toLocaleString() + '</span>'
+      + '<span style="color:#B0AEA5;font-size:13px;">total</span>'
+      + '<span style="font-size:20px;font-weight:600;color:#3D3D3A;">+' + (data.today||0) + '</span>'
+      + '<span style="color:#B0AEA5;font-size:13px;">today</span>'
+      + '</div>'
+      + '<div style="margin-top:8px;">' + platformTags + '</div>'
+      + lastLine;
+  } catch(e) { console.error('stream stats error:', e); }
+}
+
 async function fetchRemoteTools() {
   try {
     const r = await fetch('/api/remote-tools');
@@ -1258,9 +1344,11 @@ async function fetchRemoteTools() {
 applyStaticI18n();
 fetchStatus();
 fetchHeatmap();
+fetchStreamStats();
 searchMemories();
 fetchRemoteTools();
 setInterval(fetchStatus, 3000);
+setInterval(fetchStreamStats, 10000);
 setInterval(fetchRemoteTools, 10000);
 </script>
 </body>
