@@ -25,6 +25,8 @@ echo "========================================"
 # ─── 1. Memory HTTP service ───
 if is_running .pid-http; then
     echo "   ✓ Memory HTTP already running"
+elif [ ! -f "${IMPRINT_OAUTH_FILE:-$HOME/.imprint-oauth.json}" ] && [ -z "${OAUTH_ACCESS_TOKEN:-}" ]; then
+    echo "   - Memory HTTP: no credentials, skip (run: python3 scripts/generate_oauth.py)"
 else
     echo "   Starting Memory HTTP..."
     nohup imprint-memory --http > logs/http.log 2>&1 &
@@ -34,7 +36,9 @@ else
 fi
 
 # ─── 2. Cloudflare Tunnel ───
-if ! command -v cloudflared &>/dev/null; then
+if ! is_running .pid-http; then
+    echo "   - Tunnel: Memory HTTP not running, skip"
+elif ! command -v cloudflared &>/dev/null; then
     echo "   - Tunnel: cloudflared not installed, skip"
 elif is_running .pid-tunnel; then
     echo "   ✓ Tunnel already running"

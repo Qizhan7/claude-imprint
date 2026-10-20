@@ -20,6 +20,24 @@ import sys
 from imprint_memory import memory_manager as mem
 
 app = FastAPI(title="Claude Imprint")
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
+@app.middleware("http")
+async def _local_only(request: Request, call_next):
+    """The dashboard has no login, so only answer requests aimed at localhost.
+    Host check blocks DNS-rebinding; Origin check stops other websites from
+    POSTing start/stop through your browser."""
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0]
+    if host not in _LOCAL_HOSTS:
+        return JSONResponse({"error": "forbidden host"}, status_code=403)
+    origin = request.headers.get("origin")
+    if request.method not in ("GET", "HEAD", "OPTIONS") and origin:
+        o_host = origin.split("://", 1)[-1].rsplit(":", 1)[0]
+        if o_host not in _LOCAL_HOSTS:
+            return JSONResponse({"error": "cross-origin request refused"}, status_code=403)
+    return await call_next(request)
 BASE = Path(__file__).parent.parent.parent  # packages/imprint_dashboard -> project root
 DATA_DIR = Path(os.environ.get("IMPRINT_DATA_DIR", str(Path.home() / ".imprint")))
 TZ_OFFSET = int(os.environ.get("TZ_OFFSET", 0))

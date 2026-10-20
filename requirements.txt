@@ -1,5 +1,8 @@
-# Core memory system
-imprint-memory @ git+https://github.com/Qizhan7/imprint-memory.git
+# Core memory system (0.4.1+ : HTTP mode always requires a token)
+imprint-memory>=0.4.1
+
+# MCP SDK — telegram/utils servers use FastMCP, which mcp 2.x renamed
+mcp[cli]>=1.0.0,<2
 
 # HTTP mode (imprint-memory --http) + Dashboard
 uvicorn>=0.34.0

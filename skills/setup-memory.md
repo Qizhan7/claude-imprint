@@ -49,13 +49,14 @@ ollama serve  # runs on localhost:11434 by default
 Set custom URL if needed: `export OLLAMA_URL=http://localhost:11434`
 
 ### 4. Optional: Enable HTTP Mode (for Claude.ai remote access)
-Start the memory server in HTTP mode:
+HTTP mode refuses to start without credentials. Generate them first:
 ```bash
-imprint-memory --http
+python3 scripts/generate_oauth.py   # writes ~/.imprint-oauth.json
+imprint-memory --http               # → 127.0.0.1:8000, token always required
 ```
-This serves on port 8000. Use Cloudflare Tunnel or similar to expose it.
+Expose it with Cloudflare Tunnel. Requires imprint-memory 0.4.1+ — older versions let requests through any plain TCP forwarder (frp, ssh -R) skip the token.
 
-For OAuth, create `~/.imprint-oauth.json`:
+Or write `~/.imprint-oauth.json` yourself:
 ```json
 {
   "client_id": "your-client-id",
