@@ -1,5 +1,6 @@
 #!/bin/bash
 # Pre-Compaction Memory Flush
+[ -n "${IMPRINT_STARLOG_CHILD:-}" ] && exit 0
 # Triggered automatically before CC compresses context.
 # Reads the transcript and saves recent conversation to daily log.
 # stdin: JSON with session_id, transcript_path, trigger

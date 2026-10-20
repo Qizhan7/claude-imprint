@@ -55,6 +55,25 @@ TMUX_TARGET = os.environ.get("HEARTBEAT_TMUX_TARGET", "imprint-tg")
 TMUX_BIN = shutil.which("tmux") or "tmux"
 PULSE_MARK = "[Heartbeat"   # hooks/post_response_processor.py keys on this
 
+
+def _load_starlog():
+    """packages/imprint_starlog/starlog.py, if present (optional)."""
+    path = PROJECT_DIR / "packages" / "imprint_starlog" / "starlog.py"
+    if not path.exists() or os.environ.get("STARLOG_DISABLE") == "1":
+        return None
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("imprint_starlog", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        print(f"starlog unavailable: {e}")
+        return None
+
+
+STARLOG = _load_starlog()
+
 # Paths to MCP server entry points
 TELEGRAM_SERVER = PROJECT_DIR / "packages" / "imprint_telegram" / "server.py"
 
@@ -126,8 +145,16 @@ def build_pulse_text() -> str:
     current_time = now_local().strftime("%Y-%m-%d %H:%M (%A)")
     where = f"the Telegram reply tool (chat_id {TELEGRAM_CHAT_ID})" if TELEGRAM_CHAT_ID else "the Telegram reply tool"
     quiet = "\nQuiet hours are on: only message them if it's urgent." if is_quiet_hours() else ""
+    others = ""
+    if STARLOG:
+        try:
+            fresh = STARLOG.lines_since("heartbeat", exclude_window="telegram")
+            if fresh:
+                others = "\n\nSince the last heartbeat, in other windows (starlog):\n" + "\n".join(fresh)
+        except Exception as e:
+            print(f"starlog delta failed: {e}")
     return f"""{PULSE_MARK} · {current_time}]
-This is your scheduled heartbeat, not a message from the user. They only see what you send through {where}; what you write here stays in the terminal.{quiet}
+This is your scheduled heartbeat, not a message from the user. They only see what you send through {where}; what you write here stays in the terminal.{quiet}{others}
 
 {heartbeat_md.strip()}
 
@@ -300,6 +327,13 @@ async def heartbeat_loop():
     print()
 
     while True:
+        if STARLOG:
+            try:  # weave the day's new starlog lines before waking up
+                n = await asyncio.to_thread(STARLOG.arrange)
+                if n:
+                    print(f"[{now_local():%H:%M:%S}] Starlog: arranged {n} line(s)")
+            except Exception as e:
+                print(f"Starlog arrange error: {e}")
         try:
             await run_heartbeat()
         except Exception as e:

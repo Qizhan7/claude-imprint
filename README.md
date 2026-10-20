@@ -22,6 +22,7 @@ Built for **Claude Code Pro/Max subscribers**. Uses only official Claude Code fe
 - **Categorized storage** — Memories tagged by type (facts, events, tasks, experience) and source. Search by category or let hybrid search find the best match.
 - **Knowledge bank** — Long-form structured knowledge in Markdown files (`memory/bank/`). Preferences, relationships, technical experience — all indexed and included in semantic search.
 - **Daily logs** — Automatic daily journals. Pre-compaction hooks capture context before it's compressed. Nothing gets lost.
+- **Starlog** — A timeline of your day across every window. After each stretch of conversation a small model writes one first-person line (`14:20 [telegram] …`); every half hour the lines are woven into short paragraphs, merging the same event seen from different windows. Every new session starts out knowing what the other windows did today.
 
 ### 💬 Multi-Channel
 - **Telegram** (primary) — Full-featured: chat, file sharing, heartbeat notifications, morning briefings, direct messaging from Claude.ai. Uses Anthropic's official Claude Code Telegram plugin.
@@ -156,13 +157,30 @@ Add to `~/.claude/settings.json` (replace `/path/to/claude-imprint`):
 ```json
 {
   "hooks": {
-    "PreCompact": [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/pre-compact-flush.sh" }] }],
-    "Stop":       [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/post-response.sh" }] }]
+    "PreCompact":   [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/pre-compact-flush.sh" }] }],
+    "Stop":         [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/post-response.sh" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/session-start.sh" }] }]
   }
 }
 ```
 
-PreCompact saves context before compaction; Stop logs each turn. The hooks pick up `.venv/` in the project automatically (or set `IMPRINT_VENV`).
+PreCompact saves context before compaction; Stop logs each turn and feeds the starlog; SessionStart hands each new session today's starlog. The hooks pick up `.venv/` in the project automatically (or set `IMPRINT_VENV`).
+
+### Starlog
+
+Needs the Stop and SessionStart hooks above. Files live in `~/.imprint/starlog/`:
+
+```
+timeline-2026-10-20.md      raw lines, one per stretch of conversation
+  - 14:20 [telegram] Planned a matcha basque cheesecake for her friend's birthday
+  - 14:31 [cc·my-app] Fixed the login redirect loop; tests pass again
+arranged-2026-10-20.md      the same day woven into paragraphs
+```
+
+- **Lines** come from the Stop hook. It waits for enough new text (400 chars) and at most one line per window every 10 minutes, then asks `claude -p --model haiku` for one sentence. That runs on your own subscription, with no tools, no MCP and no saved session. If hooks can't see your login, it uses `~/.claude/cron-token`.
+- **Arranging** runs before every heartbeat, or from cron: `*/30 * * * * cd /path/to/claude-imprint && .venv/bin/python packages/imprint_starlog/starlog.py arrange`. Earlier paragraphs stay frozen; only the latest one can be revised to absorb something that continues it. If the model call fails, lines are kept raw.
+- **New sessions** get today's paragraphs, the tail of yesterday and the lines not woven in yet (budget `STARLOG_INJECT_CHARS`, default 8000). The long-running Telegram session gets other windows' new lines inside each heartbeat pulse.
+- `python3 packages/imprint_starlog/starlog.py show` prints today. The day starts at `STARLOG_DAY_START` (default 5am), so a late night still counts as the same day. `STARLOG_DISABLE=1` turns it off.
 
 ### Adding other channels (Discord, Slack, etc.)
 
@@ -198,6 +216,10 @@ Without this, keyword search still works — you just don't get vector similarit
 | `HEARTBEAT_MODE` | `auto` | `channel` = paste into the tmux session, `headless` = one-off `claude -p`, `auto` = channel if the session is up |
 | `HEARTBEAT_TMUX_TARGET` | `imprint-tg` | tmux session hosting the Telegram channel |
 | `TELEGRAM_CHAT_ID` | unset | Chat the heartbeat should reply to |
+| `STARLOG_DAY_START` | `5` | Hour the starlog day starts (01:00 still counts as yesterday) |
+| `STARLOG_MODEL` | `haiku` | Model for starlog lines and arranging |
+| `STARLOG_INJECT_CHARS` | `8000` | Max starlog size handed to a new session |
+| `STARLOG_DISABLE` | unset | `1` turns the starlog off |
 | `TELEGRAM_BOT_TOKEN` | — | From @BotFather |
 | `TELEGRAM_CHAT_ID` | — | From @userinfobot |
 | `QUIET_START` / `QUIET_END` | `23` / `7` | No proactive messages during these hours |
