@@ -89,7 +89,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Register memory MCP server
-claude mcp add -s user imprint-memory -- imprint-memory
+# Use the venv path so Claude Code finds it even when the venv isn't activated
+claude mcp add -s user imprint-memory -- "$(pwd)/.venv/bin/imprint-memory"
 
 # Start dashboard
 python3 packages/imprint_dashboard/dashboard.py
@@ -137,19 +138,26 @@ python3 packages/imprint_heartbeat/agent.py
 bash cron-task.sh morning-briefing cron-prompts/morning-briefing.md
 ```
 
+Cron runs with a bare environment: `cron-task.sh` puts the project's `.venv/bin` on PATH (override with `IMPRINT_VENV`) and reads a long-lived token from `~/.claude/cron-token` (`claude setup-token` makes one).
+
 Cron templates: `morning-briefing.md`, `drink-water.md`, `health-check.md`, `nightly-consolidation.md`, `weekly-memory-audit.md`. Edit to fit your style and schedule with crontab.
 
 > **Note:** Templates that use `send_telegram` or `system_status` need the full MCP config. The runner auto-detects `cron-mcp-full.json` (includes telegram + utils) if present, otherwise falls back to `cron-mcp.json` (memory only).
 
 ### Hooks
 
-```bash
-# Save context before compaction
-claude settings add-hook PreCompact "bash $(pwd)/hooks/pre-compact-flush.sh"
+Add to `~/.claude/settings.json` (replace `/path/to/claude-imprint`):
 
-# Log conversations after each response
-claude settings add-hook Stop "bash $(pwd)/hooks/post-response.sh"
+```json
+{
+  "hooks": {
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/pre-compact-flush.sh" }] }],
+    "Stop":       [{ "hooks": [{ "type": "command", "command": "bash /path/to/claude-imprint/hooks/post-response.sh" }] }]
+  }
+}
 ```
+
+PreCompact saves context before compaction; Stop logs each turn. The hooks pick up `.venv/` in the project automatically (or set `IMPRINT_VENV`).
 
 ### Adding other channels (Discord, Slack, etc.)
 

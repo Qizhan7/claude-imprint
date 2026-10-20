@@ -13,11 +13,14 @@ SESSION_ID=$(echo "$INPUT" | /usr/bin/python3 -c "import sys,json; print(json.lo
 DATE=$(date +%Y-%m-%d)
 TIME=$(date +%H:%M)
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Use the project venv if there is one (Claude Code runs hooks with your login PATH).
+[ -x "${IMPRINT_VENV:-$SCRIPT_DIR/.venv}/bin/python3" ] && export PATH="${IMPRINT_VENV:-$SCRIPT_DIR/.venv}/bin:$PATH"
 LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
-# Ensure imprint_memory uses the project's memory.db, not ~/.imprint/
-export IMPRINT_DATA_DIR="$SCRIPT_DIR"
+# Same data dir as the imprint-memory MCP server (default ~/.imprint), so
+# logged turns show up in conversation_search. Set IMPRINT_DATA_DIR to override.
+export IMPRINT_DATA_DIR="${IMPRINT_DATA_DIR:-$HOME/.imprint}"
 
 echo "$DATE $TIME PreCompact trigger=$TRIGGER session=$SESSION_ID" >> "$LOG_DIR/compaction.log"
 

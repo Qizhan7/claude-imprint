@@ -41,3 +41,11 @@ chat_sessions/
 conversations.json
 output/
 docs/tutorial-*.md
+
+# Python venv from the Quick start
+.venv/
+
+# Hook runtime state
+logs/.offset-*
+logs/.catchup-*
+recent_context.md

@@ -19,7 +19,10 @@ CONTEXT_FILE="$PROJECT_DIR/recent_context.md"
 # Use cron-mcp-full.json if available (includes telegram + utils tools),
 # otherwise fall back to cron-mcp.json (memory only).
 if [ -f "$PROJECT_DIR/cron-mcp-full.json" ]; then
-    MCP_CONFIG="$PROJECT_DIR/cron-mcp-full.json"
+    # Paths in the file are relative to the project, but claude runs from $HOME.
+    MCP_CONFIG=$(mktemp -t imprint-mcp.XXXXXX)
+    sed "s#\"packages/#\"$PROJECT_DIR/packages/#g" "$PROJECT_DIR/cron-mcp-full.json" > "$MCP_CONFIG"
+    trap 'rm -f "$MCP_CONFIG"' EXIT
 else
     MCP_CONFIG="$PROJECT_DIR/cron-mcp.json"
 fi
@@ -27,6 +30,10 @@ fi
 # ─── Environment ───
 # cron has a minimal PATH; set up everything we need
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# The Quick start installs into a venv; cron won't have it activated.
+# Put it first so `imprint-memory` and `python3` are the ones with the deps.
+VENV_DIR="${IMPRINT_VENV:-$PROJECT_DIR/.venv}"
+[ -x "$VENV_DIR/bin/imprint-memory" ] && export PATH="$VENV_DIR/bin:$PATH"
 
 # ─── Auth ───
 # Max Plan users: store your OAuth token in ~/.claude/cron-token
@@ -39,6 +46,9 @@ fi
 
 mkdir -p "$LOG_DIR"
 LOGFILE="$LOG_DIR/cron-${TASK_NAME}.log"
+if ! command -v imprint-memory >/dev/null 2>&1; then
+    echo "[$(date +"%Y-%m-%d %H:%M")] WARNING: imprint-memory not on PATH, memory tools will be missing (set IMPRINT_VENV to your venv)" >> "$LOGFILE"
+fi
 
 # ─── Timestamp ───
 TS=$(date +"%Y-%m-%d %H:%M")
@@ -72,7 +82,7 @@ echo "[$TS] Output: ${OUTPUT:0:200}" >> "$LOGFILE"
 # ─── Append to recent_context.md if telegram was sent ───
 # The AI output should contain a line like: SENT_TG: <message content>
 # This is instructed in each task's prompt.
-SENT_MSG=$(echo "$OUTPUT" | grep "^SENT_TG:" | head -1 | sed 's/^SENT_TG: *//')
+SENT_MSG=$(echo "$OUTPUT" | grep "^SENT_TG:" | head -1 | sed 's/^SENT_TG: *//' || true)
 
 if [ -n "$SENT_MSG" ]; then
     DISPLAY="${SENT_MSG:0:200}"

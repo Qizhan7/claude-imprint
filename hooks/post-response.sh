@@ -8,6 +8,8 @@
 
 INPUT=$(cat)
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Use the project venv if there is one (Claude Code runs hooks with your login PATH).
+[ -x "${IMPRINT_VENV:-$SCRIPT_DIR/.venv}/bin/python3" ] && export PATH="${IMPRINT_VENV:-$SCRIPT_DIR/.venv}/bin:$PATH"
 LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
@@ -19,8 +21,9 @@ if [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
     exit 0
 fi
 
-# Ensure imprint_memory uses the project's memory.db, not ~/.imprint/
-export IMPRINT_DATA_DIR="$SCRIPT_DIR"
+# Same data dir as the imprint-memory MCP server (default ~/.imprint), so
+# logged turns show up in conversation_search. Set IMPRINT_DATA_DIR to override.
+export IMPRINT_DATA_DIR="${IMPRINT_DATA_DIR:-$HOME/.imprint}"
 
 # Run the Python processor
 python3 "$SCRIPT_DIR/hooks/post_response_processor.py" "$TRANSCRIPT" "$SESSION_ID" "$SCRIPT_DIR" 2>> "$LOG_DIR/post-response.log"
@@ -31,7 +34,7 @@ python3 "$SCRIPT_DIR/update_claude_md.py" 2>> "$LOG_DIR/post-response.log" || tr
 # Check if recent_context.md needs compression (>120 message lines)
 CONTEXT_FILE="$SCRIPT_DIR/recent_context.md"
 if [ -f "$CONTEXT_FILE" ]; then
-    MSG_LINES=$(grep -c '^\[' "$CONTEXT_FILE" 2>/dev/null || echo 0)
+    MSG_LINES=$(grep -c '^\[' "$CONTEXT_FILE" 2>/dev/null) || MSG_LINES=0
     if [ "$MSG_LINES" -gt 120 ]; then
         if [ -f "$SCRIPT_DIR/scripts/compress_context.py" ]; then
             # Run compression in background to not block the hook

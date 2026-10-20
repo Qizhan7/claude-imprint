@@ -40,14 +40,10 @@ HEARTBEAT_SESSION_FILE = PROJECT_DIR / "data" / "heartbeat_session.txt"
 TELEGRAM_SERVER = PROJECT_DIR / "packages" / "imprint_telegram" / "server.py"
 
 
-def _get_telegram_plugin_dir() -> Path:
-    """Find the latest installed Telegram plugin version."""
-    base = Path.home() / ".claude/plugins/cache/claude-plugins-official/telegram"
-    if base.exists():
-        versions = sorted(base.iterdir(), reverse=True)
-        if versions:
-            return versions[0]
-    return base / "0.0.1"
+def _imprint_memory_cmd() -> str:
+    """imprint-memory from the same venv as this process, else whatever is on PATH."""
+    sibling = Path(sys.executable).parent / "imprint-memory"
+    return str(sibling) if sibling.exists() else (shutil.which("imprint-memory") or "imprint-memory")
 
 
 def now_local():
@@ -95,7 +91,7 @@ Current time: {current_time}
 ## Instructions
 1. Go through the heartbeat checklist
 2. Decide if any action or notification is needed
-3. If notification needed, use Telegram reply tool{f' (chat_id {TELEGRAM_CHAT_ID})' if TELEGRAM_CHAT_ID else ''}
+3. If notification needed, use the send_telegram tool{f' (chat_id {TELEGRAM_CHAT_ID})' if TELEGRAM_CHAT_ID else ''}
 4. If there's new important information, save it to memory
 5. If all clear, reply with HEARTBEAT_OK
 
@@ -120,25 +116,20 @@ async def run_heartbeat():
         cmd.extend(["--resume", session_id])
 
     # Build MCP config with modular servers
+    # Send-only Telegram server. Don't load the official Telegram channel
+    # plugin here: it polls getUpdates, and Telegram allows one poller per bot
+    # token, so it would fight (or kill) your --channels session.
     mcp_servers = {
-        "telegram": {
-            "command": "bun",
-            "args": ["run", "--cwd",
-                     str(_get_telegram_plugin_dir()),
-                     "--shell=bun", "--silent", "start"]
-        },
         "imprint-memory": {
-            "command": "imprint-memory",
+            "command": _imprint_memory_cmd(),
             "args": []
         },
     }
-    # Add telegram send server if available
     if TELEGRAM_SERVER.exists():
         mcp_servers["imprint-telegram"] = {
-            "command": "python3",
+            "command": sys.executable,
             "args": [str(TELEGRAM_SERVER)]
         }
-
     mcp_config = json.dumps({"mcpServers": mcp_servers})
     cmd.extend(["--mcp-config", mcp_config])
     cmd.extend(["--permission-mode", "auto"])
