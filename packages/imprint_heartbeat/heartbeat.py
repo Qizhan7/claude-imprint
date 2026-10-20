@@ -1,6 +1,19 @@
 """
 Claude Imprint — Heartbeat Module
-Periodically invokes Claude Code CLI to perform automated checks.
+
+Two ways to wake up:
+
+- channel (default when available): your Telegram `--channels` session runs
+  inside tmux (start.sh does this). Each heartbeat pastes a short pulse into
+  that same session, so the Claude that wakes up is the one you've been
+  talking to: same context, and it answers through the Telegram reply tool.
+  The official Telegram plugin is used as-is, nothing patched.
+- headless (fallback): no tmux session found, so spawn a one-off `claude -p`
+  with memory + send-only Telegram tools. Works, but it's a fresh instance
+  with no conversation context.
+
+HEARTBEAT_MODE=auto|channel|headless   (default auto)
+HEARTBEAT_TMUX_TARGET=imprint-tg       (tmux session running the channel)
 """
 
 from __future__ import annotations
@@ -10,6 +23,7 @@ import json
 import os
 import signal
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -35,6 +49,11 @@ QUIET_START = int(os.environ.get("QUIET_START", 23))
 QUIET_END = int(os.environ.get("QUIET_END", 7))
 
 HEARTBEAT_SESSION_FILE = PROJECT_DIR / "data" / "heartbeat_session.txt"
+
+HEARTBEAT_MODE = os.environ.get("HEARTBEAT_MODE", "auto").lower()
+TMUX_TARGET = os.environ.get("HEARTBEAT_TMUX_TARGET", "imprint-tg")
+TMUX_BIN = shutil.which("tmux") or "tmux"
+PULSE_MARK = "[Heartbeat"   # hooks/post_response_processor.py keys on this
 
 # Paths to MCP server entry points
 TELEGRAM_SERVER = PROJECT_DIR / "packages" / "imprint_telegram" / "server.py"
@@ -100,8 +119,91 @@ Important: Don't send messages just to prove you're alive. Only notify when ther
     return prompt
 
 
+def build_pulse_text() -> str:
+    """Short pulse for the live channel session. It already has CLAUDE.md,
+    memory tools and the conversation, so only send what changes."""
+    heartbeat_md = HEARTBEAT_FILE.read_text(encoding="utf-8") if HEARTBEAT_FILE.exists() else ""
+    current_time = now_local().strftime("%Y-%m-%d %H:%M (%A)")
+    where = f"the Telegram reply tool (chat_id {TELEGRAM_CHAT_ID})" if TELEGRAM_CHAT_ID else "the Telegram reply tool"
+    quiet = "\nQuiet hours are on: only message them if it's urgent." if is_quiet_hours() else ""
+    return f"""{PULSE_MARK} · {current_time}]
+This is your scheduled heartbeat, not a message from the user. They only see what you send through {where}; what you write here stays in the terminal.{quiet}
+
+{heartbeat_md.strip()}
+
+If you want to reach them, send it. If there's nothing to do, answer HEARTBEAT_OK here."""
+
+
+def _tmux(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([TMUX_BIN, *args], input=input_text, capture_output=True, text=True, timeout=10)
+
+
+def channel_session_alive() -> bool:
+    if not shutil.which(TMUX_BIN):
+        return False
+    try:
+        return _tmux("has-session", "-t", TMUX_TARGET).returncode == 0
+    except Exception:
+        return False
+
+
+# Anything that looks like Claude Code waiting on a choice. Pasting a pulse +
+# Enter into one of these would answer it for the user, so skip that tick.
+_DIALOG_HINTS = ("❯ 1. Yes", "Esc to cancel", "Enter to confirm", "Press Enter to continue")
+
+
+def channel_session_blocked() -> str | None:
+    try:
+        pane = _tmux("capture-pane", "-p", "-t", TMUX_TARGET).stdout
+    except Exception as e:
+        return f"capture failed: {e}"
+    tail = "\n".join(pane.rstrip().splitlines()[-15:])
+    for hint in _DIALOG_HINTS:
+        if hint in tail:
+            return hint
+    return None
+
+
+async def run_channel_pulse() -> bool:
+    """Paste one pulse into the tmux-hosted channel session. True if sent."""
+    ts = now_local().strftime('%H:%M:%S')
+    blocked = channel_session_blocked()
+    if blocked:
+        print(f"[{ts}] Pulse skipped: session is waiting on a prompt ({blocked!r})")
+        return False
+    text = build_pulse_text()
+    buf = "imprint-pulse"
+    r = _tmux("load-buffer", "-b", buf, "-", input_text=text)
+    if r.returncode != 0:
+        print(f"[{ts}] Pulse failed (load-buffer): {r.stderr.strip()}")
+        return False
+    # -p: bracketed paste, so the newlines land in one message instead of
+    # submitting line by line. Enter goes separately once the paste settles.
+    r = _tmux("paste-buffer", "-p", "-d", "-b", buf, "-t", TMUX_TARGET)
+    if r.returncode != 0:
+        print(f"[{ts}] Pulse failed (paste-buffer): {r.stderr.strip()}")
+        return False
+    await asyncio.sleep(0.8)
+    _tmux("send-keys", "-t", TMUX_TARGET, "Enter")
+    print(f"[{ts}] Pulse → tmux:{TMUX_TARGET}")
+    return True
+
+
 async def run_heartbeat():
-    """Execute one heartbeat cycle"""
+    """One heartbeat: into the live channel session if there is one."""
+    use_channel = HEARTBEAT_MODE == "channel" or (HEARTBEAT_MODE == "auto" and channel_session_alive())
+    if use_channel:
+        if not channel_session_alive():
+            ts = now_local().strftime('%H:%M:%S')
+            print(f"[{ts}] Pulse skipped: tmux session {TMUX_TARGET!r} not running (start.sh starts it)")
+            return
+        await run_channel_pulse()
+        return
+    await run_headless()
+
+
+async def run_headless():
+    """Fallback: one-off `claude -p` with memory + send-only Telegram tools."""
     prompt = build_heartbeat_prompt()
     session_id = load_session_id()
 
@@ -193,6 +295,7 @@ async def run_heartbeat():
 async def heartbeat_loop():
     print(f"Heartbeat agent started")
     print(f"  Interval: {HEARTBEAT_INTERVAL}s ({HEARTBEAT_INTERVAL // 60}min)")
+    print(f"  Mode: {HEARTBEAT_MODE} (tmux target: {TMUX_TARGET}, alive: {channel_session_alive()})")
     print(f"  Project: {PROJECT_DIR}")
     print()
 

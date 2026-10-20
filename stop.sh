@@ -28,16 +28,15 @@ stop_pid "Telegram"     .pid-telegram
 
 # Cleanup: kill any orphan processes
 pkill -f "imprint-memory --http" 2>/dev/null || true
-pkill -f "cloudflared tunnel" 2>/dev/null || true
+pkill -f "cloudflared tunnel run my-tunnel" 2>/dev/null || true  # only ours, not every tunnel on the machine
 
-IS_MAC=false
-[[ "$(uname)" == "Darwin" ]] && IS_MAC=true
-
-if $IS_MAC; then
+TG_SESSION="${HEARTBEAT_TMUX_TARGET:-imprint-tg}"
+if command -v tmux &>/dev/null && tmux has-session -t "$TG_SESSION" 2>/dev/null; then
+    tmux kill-session -t "$TG_SESSION" && echo "   ✓ Telegram (tmux $TG_SESSION) stopped"
+elif [[ "$(uname)" == "Darwin" ]]; then
     echo ""
-    echo "   Note: Telegram Terminal window should be closed manually (Ctrl+C)"
+    echo "   Note: a Telegram Terminal window (started without tmux) has to be closed manually (Ctrl+C)"
 else
-    # On Linux, also kill background Telegram
     pkill -f "channels plugin:telegram" 2>/dev/null || true
 fi
 

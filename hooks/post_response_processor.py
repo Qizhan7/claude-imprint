@@ -145,6 +145,13 @@ def parse_platform(entry: dict, content) -> str:
     entrypoint = entry.get("entrypoint", "")
     if entrypoint == "sdk-cli":
         return "heartbeat"
+    # Pulses pasted into the channel session by the heartbeat agent
+    if isinstance(content, str) and content.lstrip().startswith("[Heartbeat"):
+        return "heartbeat"
+    if isinstance(content, list):
+        first = next((c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"), "")
+        if first.lstrip().startswith("[Heartbeat"):
+            return "heartbeat"
     return "cc"
 
 

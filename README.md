@@ -37,7 +37,7 @@ Built for **Claude Code Pro/Max subscribers**. Uses only official Claude Code fe
 
 ### ⚡ Automation
 - **Scheduled tasks** — Morning briefing, reminders, nightly memory consolidation. Customizable cron prompt templates.
-- **Heartbeat agent** — Periodic automated checks with proactive Telegram notifications.
+- **Heartbeat agent** — Wakes your live Telegram session on a timer (pastes a pulse into it via tmux), so the Claude that checks in is the same one you've been talking to, with full context. Falls back to a one-off headless run if there's no session.
 - **Hooks** — Pre-compaction context saver + post-response conversation logger with auto-compression.
 
 ### 📊 Dashboard
@@ -124,19 +124,24 @@ Use Cloudflare Tunnel (or anything that forwards the client IP). Needs imprint-m
 ### Telegram
 
 ```bash
-claude /telegram:configure
-claude --permission-mode auto --channels plugin:telegram@claude-plugins-official
+claude /telegram:configure      # once: bot token + pairing
+./start.sh                       # runs the channel session in tmux (session "imprint-tg")
+tmux attach -t imprint-tg        # watch it; Ctrl-b d to detach
 ```
+
+The session is the stock `claude --permission-mode auto --channels plugin:telegram@claude-plugins-official`, just hosted in tmux so the heartbeat can reach it. Without tmux it still works, but the heartbeat falls back to headless mode.
 
 ### Automation
 
 ```bash
-# Heartbeat agent (periodic checks + Telegram notifications)
+# Heartbeat agent — pastes a pulse into the tmux Telegram session every HEARTBEAT_INTERVAL
 python3 packages/imprint_heartbeat/agent.py
 
 # Cron tasks — use prompt templates in cron-prompts/
 bash cron-task.sh morning-briefing cron-prompts/morning-briefing.md
 ```
+
+How a pulse works: the agent pastes a short `[Heartbeat · <time>]` message (current time + your `HEARTBEAT.md` checklist) into the channel session and presses Enter. Claude handles it like any other turn, with the whole conversation in context, and messages you through the Telegram reply tool only if it has something to say. If the session is sitting on a permission prompt, that tick is skipped so the pulse never answers a dialog for you. Hooks log pulses as `heartbeat`, not as your messages.
 
 Cron runs with a bare environment: `cron-task.sh` puts the project's `.venv/bin` on PATH (override with `IMPRINT_VENV`) and reads a long-lived token from `~/.claude/cron-token` (`claude setup-token` makes one).
 
@@ -190,6 +195,9 @@ Without this, keyword search still works — you just don't get vector similarit
 | `IMPRINT_DATA_DIR` | `~/.imprint` | Directory for memory.db and files |
 | `TZ_OFFSET` | `0` | UTC offset (e.g. `12`, `-5`) |
 | `HEARTBEAT_INTERVAL` | `900` | Heartbeat interval (seconds) |
+| `HEARTBEAT_MODE` | `auto` | `channel` = paste into the tmux session, `headless` = one-off `claude -p`, `auto` = channel if the session is up |
+| `HEARTBEAT_TMUX_TARGET` | `imprint-tg` | tmux session hosting the Telegram channel |
+| `TELEGRAM_CHAT_ID` | unset | Chat the heartbeat should reply to |
 | `TELEGRAM_BOT_TOKEN` | — | From @BotFather |
 | `TELEGRAM_CHAT_ID` | — | From @userinfobot |
 | `QUIET_START` / `QUIET_END` | `23` / `7` | No proactive messages during these hours |

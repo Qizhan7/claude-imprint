@@ -51,19 +51,28 @@ else
 fi
 
 # ─── 3. Telegram ───
-if is_proc_running "channels plugin:telegram"; then
-    echo "   ✓ Telegram already running"
+# Runs inside tmux so the heartbeat can paste pulses into this same session
+# (see packages/imprint_heartbeat/heartbeat.py). Attach to watch it.
+TG_SESSION="${HEARTBEAT_TMUX_TARGET:-imprint-tg}"
+TG_CMD="claude --permission-mode auto --channels plugin:telegram@claude-plugins-official"
+if command -v tmux &>/dev/null && tmux has-session -t "$TG_SESSION" 2>/dev/null; then
+    echo "   ✓ Telegram already running (tmux attach -t $TG_SESSION)"
+elif is_proc_running "channels plugin:telegram"; then
+    echo "   ✓ Telegram already running (outside tmux: heartbeat falls back to headless mode)"
 elif ! command -v claude &>/dev/null; then
     echo "   - Telegram: claude CLI not found, skip"
+elif command -v tmux &>/dev/null; then
+    echo "   Starting Telegram in tmux..."
+    tmux new-session -d -s "$TG_SESSION" -c "$(pwd)" "$TG_CMD"
+    echo "   ✓ Telegram started (watch: tmux attach -t $TG_SESSION, detach: Ctrl-b d)"
 else
-    echo "   Starting Telegram..."
+    echo "   Starting Telegram (no tmux: heartbeat will use headless mode)..."
     if $IS_MAC; then
-        osascript -e 'tell application "Terminal" to do script "cd '"$(pwd)"' && claude --permission-mode auto --channels plugin:telegram@claude-plugins-official"' 2>/dev/null
+        osascript -e 'tell application "Terminal" to do script "cd '"$(pwd)"' && '"$TG_CMD"'"' 2>/dev/null
         echo "   ✓ Telegram window opened"
     else
-        nohup claude --permission-mode auto --channels plugin:telegram@claude-plugins-official > logs/telegram.log 2>&1 &
-        echo $! > .pid-telegram
-        echo "   ✓ Telegram started (PID: $!, log: logs/telegram.log)"
+        echo "   ! Without tmux there's no terminal for an interactive session on Linux."
+        echo "     Install tmux (apt install tmux) and run ./start.sh again."
     fi
 fi
 
