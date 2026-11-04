@@ -74,59 +74,163 @@ COMPONENTS = {
 
 # ─── Status Detection ────────────────────────────────────
 
+# lsof lives in /usr/sbin on macOS, which is missing from PATH under launchd,
+# systemd and most containers. Without the fallback the port probe raises
+# FileNotFoundError, gets swallowed by the except, and silently never works.
+LSOF = shutil.which("lsof") or next(
+    (p for p in ("/usr/sbin/lsof", "/usr/bin/lsof") if Path(p).exists()), "lsof"
+)
+
+
+# Interpreter names make terrible identity markers: the same service shows up
+# as "python3.12" under one install and as a long Python.framework path under
+# another, so matching on them flags your own process as somebody else's.
+# The identifying parts are module names and script paths.
+_INTERPRETER = re.compile(r"(python|pythonw|node|ruby|perl|bash|sh|zsh|env)[\d.]*$", re.I)
+
+
+def _own_markers(comp):
+    """Distinctive fragments of this component's own command line.
+
+    Used to confirm that a PID found by port or name really belongs to us
+    before we are willing to signal it."""
+    parts = list(comp.get("start_cmd") or [])
+    if not parts and comp.get("terminal_cmd"):
+        parts = str(comp["terminal_cmd"]).split()
+    marks = []
+    for part in parts:
+        part = str(part)
+        if part.startswith("-") or len(part) < 4:
+            continue
+        if _INTERPRETER.match(part.rsplit("/", 1)[-1]):
+            continue
+        marks.append(part)
+    if not marks and comp.get("grep_pattern"):
+        marks.append(comp["grep_pattern"])
+    return marks
+
+
+def _pid_is_ours(pid, comp):
+    """True only if the process command line matches every marker we expect.
+
+    No cmdline (gone, or another user's process) counts as not ours."""
+    marks = _own_markers(comp)
+    if not marks:
+        return False
+    try:
+        cmdline = " ".join(psutil.Process(pid).cmdline())
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    return all(m in cmdline for m in marks)
+
+
 def get_pid_status(comp):
-    """Check background process status: port → grep → PID file"""
-    # Method 1: port detection (lsof, no root needed)
+    """Check background process status: PID file → port → grep.
+
+    Returns an ``owned`` flag alongside the PID:
+
+    * ``owned=True``  — this really is the process we started; safe to stop.
+    * ``owned=False`` — something is holding the port, but it is not ours.
+
+    ``/api/{component}/stop`` refuses to signal anything that is not owned.
+    Without that guard the Stop button kills unrelated programs: port 8000 is
+    one of the most common development ports around (Django, Jupyter, plain
+    ``http.server``), so a dashboard that stops "whatever is on 8000" is a
+    foot-gun on somebody else's machine.
+    """
+    # Method 1: the PID file we wrote ourselves at launch — the only source
+    # that actually proves ownership, so it goes first.
+    pid_file = comp.get("pid_file", "")
+    if pid_file:
+        pid_path = BASE / pid_file
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text().strip())
+                if psutil.pid_exists(pid):
+                    p = psutil.Process(pid)
+                    if p.status() != psutil.STATUS_ZOMBIE:
+                        return {"running": True, "pid": pid, "owned": True}
+            except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            pid_path.unlink(missing_ok=True)
+
+    # Method 2: who is listening on the port.
+    #
+    # ``-sTCP:LISTEN`` is load-bearing. Plain ``lsof -ti :8000`` matches a
+    # connection with 8000 on *either* end, so it also returns processes that
+    # merely dialled out to some remote host:8000 — a browser tab pointed at a
+    # remote dev server was enough to make Stop kill the browser (issue #3).
     if "check_port" in comp:
         try:
             result = subprocess.run(
-                ["lsof", "-ti", f":{comp['check_port']}"],
+                [LSOF, "-ti", f":{comp['check_port']}", "-sTCP:LISTEN"],
                 capture_output=True, text=True, timeout=3
             )
-            pids = [p for p in result.stdout.strip().split("\n") if p]
+            pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+            for pid in pids:
+                if _pid_is_ours(pid, comp):
+                    return {"running": True, "pid": pid, "owned": True}
             if pids:
-                return {"running": True, "pid": int(pids[0])}
+                # Someone else owns the port. That is not this component
+                # running, so report it as stopped — and surface the clash so
+                # the UI can say why Start will fail.
+                return {
+                    "running": False, "pid": None, "owned": False,
+                    "port_conflict": {
+                        "port": comp["check_port"], "pid": pids[0],
+                        "note": (f"port {comp['check_port']} is held by PID {pids[0]}, "
+                                 "which was not started by imprint"),
+                    },
+                }
         except Exception:
             pass
-    # Method 2: process name grep
+
+    # Method 3: process-name grep, still verified against our own markers.
     if "grep_pattern" in comp:
         try:
             result = subprocess.run(
                 ["pgrep", "-f", comp["grep_pattern"]],
                 capture_output=True, text=True, timeout=3
             )
-            pids = [p for p in result.stdout.strip().split("\n") if p]
+            pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+            for pid in pids:
+                if _pid_is_ours(pid, comp):
+                    return {"running": True, "pid": pid, "owned": True}
             if pids:
-                return {"running": True, "pid": int(pids[0])}
+                return {
+                    "running": False, "pid": None, "owned": False,
+                    "note": (f"PID {pids[0]} matches {comp['grep_pattern']!r} "
+                             "but was not started by imprint"),
+                }
         except Exception:
             pass
-    # Method 3: PID file fallback
-    pid_path = BASE / comp.get("pid_file", "")
-    if pid_path and pid_path.exists():
-        try:
-            pid = int(pid_path.read_text().strip())
-            if psutil.pid_exists(pid):
-                p = psutil.Process(pid)
-                if p.status() != psutil.STATUS_ZOMBIE:
-                    return {"running": True, "pid": pid}
-        except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-        pid_path.unlink(missing_ok=True)
-    return {"running": False, "pid": None}
+
+    return {"running": False, "pid": None, "owned": False}
 
 
 def get_terminal_status(comp):
-    """Check terminal window process status"""
+    """Check terminal window process status.
+
+    Carries the same ``owned`` flag as get_pid_status: on Linux the Stop
+    handler signals this PID, so a bare pgrep match is not enough."""
     try:
         result = subprocess.run(
             ["pgrep", "-f", comp["grep_pattern"]],
             capture_output=True, text=True, timeout=3
         )
-        pids = result.stdout.strip().split("\n")
-        pids = [p for p in pids if p]
-        return {"running": len(pids) > 0, "pid": int(pids[0]) if pids else None}
+        pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+        for pid in pids:
+            if _pid_is_ours(pid, comp):
+                return {"running": True, "pid": pid, "owned": True}
+        if pids:
+            return {
+                "running": False, "pid": None, "owned": False,
+                "note": (f"PID {pids[0]} matches {comp['grep_pattern']!r} "
+                         "but was not started by imprint"),
+            }
+        return {"running": False, "pid": None, "owned": False}
     except Exception:
-        return {"running": False, "pid": None}
+        return {"running": False, "pid": None, "owned": False}
 
 
 def get_tunnel_url():
@@ -340,6 +444,15 @@ async def api_stop(component: str):
     if comp["type"] == "background":
         # Get actual PID via status detection
         status = get_pid_status(comp)
+        if status["running"] and status["pid"] and not status.get("owned"):
+            # Something is on the port, but we did not start it. Refuse —
+            # signalling it would kill an unrelated program (issue #3).
+            return JSONResponse({
+                "ok": False,
+                "pid": status["pid"],
+                "error": status.get("note") or
+                         "that process was not started by imprint; leaving it alone",
+            }, status_code=409)
         if status["running"] and status["pid"]:
             try:
                 os.kill(status["pid"], signal.SIGTERM)
@@ -358,6 +471,13 @@ async def api_stop(component: str):
         else:
             # Linux: kill the background process
             status = get_terminal_status(comp)
+            if status["running"] and status["pid"] and not status.get("owned"):
+                return JSONResponse({
+                    "ok": False,
+                    "pid": status["pid"],
+                    "error": status.get("note") or
+                             "that process was not started by imprint; leaving it alone",
+                }, status_code=409)
             if status["running"] and status["pid"]:
                 try:
                     os.kill(status["pid"], signal.SIGTERM)
